@@ -171,27 +171,25 @@ fun TestPage(
                                         )
                                     },
                                     onClick = {
+                                        MainActivity.testReceiver = false
+                                        MainActivity.testResponseReceived = false
                                         MainActivity.appContext.getClass()
-                                        when (testReceiver) {
-                                            true -> if (currentRoute != "ChoosePage") {
-                                                navigator.navigate("ChoosePage", popUpToRoute = "TestPage")
+                                        Thread {
+                                            var waitedMs = 0
+                                            while (waitedMs < 2500 && !MainActivity.testResponseReceived) {
+                                                Thread.sleep(100)
+                                                waitedMs += 100
                                             }
-
-                                            else -> {
-                                                Thread {
-                                                    Thread.sleep(500)
-                                                    goMainThread {
-                                                        if (testReceiver) {
-                                                            if (currentRoute != "ChoosePage") {
-                                                                navigator.navigate("ChoosePage", popUpToRoute = "TestPage")
-                                                            }
-                                                        } else {
-                                                            showToastOnLooper(MainActivity.appContext.getString(R.string.broadcast_receive_timeout))
-                                                        }
+                                            goMainThread {
+                                                if (testReceiver) {
+                                                    if (currentRoute != "ChoosePage") {
+                                                        navigator.navigate("ChoosePage", popUpToRoute = "TestPage")
                                                     }
-                                                }.start()
+                                                } else if (!MainActivity.testResponseReceived) {
+                                                    showToastOnLooper(MainActivity.appContext.getString(R.string.broadcast_receive_timeout))
+                                                }
                                             }
-                                        }
+                                        }.start()
                                     },
                                     holdDownState = currentRoute == "ChoosePage"
                                 )

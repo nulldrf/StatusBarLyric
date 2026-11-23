@@ -60,7 +60,11 @@ class MainActivity : ComponentActivity() {
 
         var isLoad: Boolean = false
 
+        @Volatile
         var testReceiver = false
+
+        @Volatile
+        var testResponseReceived = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,15 +131,27 @@ class MainActivity : ComponentActivity() {
     }
 
     inner class AppTestReceiver : BroadcastReceiver() {
-        @Suppress("DEPRECATION", "UNCHECKED_CAST")
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.getStringExtra("Type")) {
                 "ReceiveClass" -> {
-                    dataList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getSerializableExtra("DataList", ArrayList<Data>()::class.java)
+                    testResponseReceived = true
+                    val bundleList = androidx.core.content.IntentCompat.getParcelableArrayListExtra(
+                        intent,
+                        "DataBundleList",
+                        Bundle::class.java
+                    )
+                    dataList = if (bundleList != null) {
+                        ArrayList(bundleList.map { Data.fromBundle(it) })
                     } else {
-                        intent.getSerializableExtra("DataList") as ArrayList<Data>
-                    } ?: arrayListOf()
+                        runCatching {
+                            intent.setExtrasClassLoader(Data::class.java.classLoader)
+                            androidx.core.content.IntentCompat.getParcelableArrayListExtra(
+                                intent,
+                                "DataList",
+                                Data::class.java
+                            )
+                        }.getOrNull() ?: arrayListOf()
+                    }
                     if (dataList.isEmpty()) {
                         "DataList is empty".log()
                         Toast.makeText(

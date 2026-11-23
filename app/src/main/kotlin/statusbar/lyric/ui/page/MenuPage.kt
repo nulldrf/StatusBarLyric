@@ -334,7 +334,8 @@ fun RestartDialog(showDialog: MutableState<Boolean>) {
                 modifier = Modifier.weight(1f),
                 text = stringResource(R.string.ok),
                 onClick = {
-                    Tools.shell("killall com.android.systemui", true)
+                    statusbar.lyric.config.ActivityOwnSP.syncAllToRemote()
+                    Tools.shell("killall com.android.systemui || pkill -f com.android.systemui", true)
                     showDialog.value = false
                 }
             )

@@ -36,12 +36,18 @@ class ConfigTools(
     private var mSP: SharedPreferences? = sharedPreferences
     private var mSPEditor: SharedPreferences.Editor? = if (readOnly) null else sharedPreferences?.edit()
 
-    fun reload() {
+    private fun resolveSP(): SharedPreferences? {
         if (readOnly) {
-            if (mSP == null) {
-                mSP = Tools.getPref(CONFIG_NAME)
+            val latest = Tools.getPref(CONFIG_NAME)
+            if (latest != null) {
+                mSP = latest
             }
         }
+        return mSP
+    }
+
+    fun reload() {
+        resolveSP()
     }
 
     fun put(key: String?, any: Any) {
@@ -53,13 +59,13 @@ class ConfigTools(
             is Float -> mSPEditor?.putFloat(key, any)
             is Long -> mSPEditor?.putLong(key, any)
         }
-        mSPEditor?.apply()
+        mSPEditor?.commit()
         XposedApp.syncPreference(CONFIG_NAME, key, any)
     }
 
     @Suppress("UNCHECKED_CAST")
     fun <T> opt(key: String, defValue: T): T {
-        val sp = mSP
+        val sp = resolveSP()
         sp.isNull {
             return defValue
         }
@@ -91,7 +97,7 @@ class ConfigTools(
 
     fun clearConfig() {
         if (readOnly) return
-        mSPEditor?.clear()?.apply()
+        mSPEditor?.clear()?.commit()
         XposedApp.clearRemotePreferences(CONFIG_NAME)
     }
 }

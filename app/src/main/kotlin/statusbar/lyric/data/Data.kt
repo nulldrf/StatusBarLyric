@@ -22,10 +22,12 @@
 
 package statusbar.lyric.data
 
+import android.os.Bundle
 import android.os.Parcel
 import android.os.Parcelable
+import java.io.Serializable
 
-class Data private constructor(parcel: Parcel) : Parcelable {
+class Data private constructor(parcel: Parcel) : Parcelable, Serializable {
     var textViewClassName: String = ""
     var textViewId: Int = 0
     var parentViewClassName: String = ""
@@ -34,11 +36,11 @@ class Data private constructor(parcel: Parcel) : Parcelable {
     var index: Int = 0
     var textSize: Float = 0f
     var idName: String = ""
-    override fun describeContents(): Int {
-        return 0
-    }
+
+    override fun describeContents(): Int = 0
 
     constructor() : this(Parcel.obtain())
+
     constructor(
         textViewClassName: String,
         textViewId: Int,
@@ -83,14 +85,32 @@ class Data private constructor(parcel: Parcel) : Parcelable {
         idName = parcel.readString().toString()
     }
 
-    companion object CREATOR : Parcelable.Creator<Data> {
-        override fun createFromParcel(parcel: Parcel): Data {
-            return Data(parcel)
-        }
+    fun toBundle(): Bundle = Bundle().apply {
+        putString("textViewClassName", textViewClassName)
+        putInt("textViewId", textViewId)
+        putString("parentViewClassName", parentViewClassName)
+        putInt("parentViewId", parentViewId)
+        putBoolean("isRepeat", isRepeat)
+        putInt("index", index)
+        putFloat("textSize", textSize)
+        putString("idName", idName)
+    }
 
-        override fun newArray(size: Int): Array<Data?> {
-            return arrayOfNulls(size)
-        }
+    companion object CREATOR : Parcelable.Creator<Data> {
+        override fun createFromParcel(parcel: Parcel): Data = Data(parcel)
+
+        override fun newArray(size: Int): Array<Data?> = arrayOfNulls(size)
+
+        fun fromBundle(bundle: Bundle): Data = Data(
+            textViewClassName = bundle.getString("textViewClassName", ""),
+            textViewId = bundle.getInt("textViewId", 0),
+            parentViewClassName = bundle.getString("parentViewClassName", ""),
+            parentViewId = bundle.getInt("parentViewId", 0),
+            isRepeat = bundle.getBoolean("isRepeat", false),
+            index = bundle.getInt("index", 0),
+            size = bundle.getFloat("textSize", 0f),
+            idName = bundle.getString("idName", "")
+        )
     }
 
     override fun toString(): String {

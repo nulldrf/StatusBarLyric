@@ -523,6 +523,11 @@ class SystemUILyric : BaseHook() {
                 )
                 lyricLayout.setBackgroundBlur(blurRadio, cornerRadius, blendModes)
             }
+            ensureSuperLyricRegistered(pullLatest = true)
+            if (isMusicPlaying && lastLyric.isNotEmpty()) {
+                changeIcon(playingApp, "")
+                updateLyricState()
+            }
         }
 
         updateConfig(1)
@@ -620,14 +625,15 @@ class SystemUILyric : BaseHook() {
     }
 
     private fun handleStopEvent(packageName: String) {
-        if (!isReady) return
         if (playingApp.isNotEmpty() && packageName.isNotEmpty() && playingApp != packageName) return
 
         lastLyric = ""
         playingApp = ""
         isMusicPlaying = false
         if (lastRunnable.isNotNull()) handler.removeCallbacks(lastRunnable!!)
+        lastRunnable = null
         if (handler.hasMessages(timeoutRestore)) handler.removeMessages(timeoutRestore)
+        if (!isReady) return
         updateLyricState(showLyric = false)
     }
 
@@ -641,8 +647,6 @@ class SystemUILyric : BaseHook() {
         album: String,
         base64Icon: String
     ) {
-        if (!isReady) return
-
         if (packageName.isNotEmpty()) {
             playingApp = packageName
         }
@@ -663,16 +667,20 @@ class SystemUILyric : BaseHook() {
         if (lyric.isEmpty()) return
         isMusicPlaying = true
         lastLyric = lyric
-        if (lastRunnable.isNotNull()) handler.postDelayed(lastRunnable!!, 800)
+        if (!isReady) return
+
+        if (lastRunnable.isNotNull()) {
+            handler.postDelayed(lastRunnable!!, 800)
+            lastRunnable = null
+        }
 
         changeIcon(playingApp, base64Icon)
         updateLyricState(delay = delay)
+        val timeoutMs = maxOf(10000L, delay.toLong() + 3000L)
         if (handler.hasMessages(timeoutRestore)) {
             handler.removeMessages(timeoutRestore)
-            handler.sendEmptyMessageDelayed(timeoutRestore, 10000L)
-        } else {
-            handler.sendEmptyMessageDelayed(timeoutRestore, 10000L)
         }
+        handler.sendEmptyMessageDelayed(timeoutRestore, timeoutMs)
     }
 
     private val superLyricV4Listener = object : LyricListener {
@@ -686,8 +694,8 @@ class SystemUILyric : BaseHook() {
                 return
             }
             val doc = view.lyric
-            val line = view.line
-            val lyricText = line?.text.orEmpty()
+            val line = view.line ?: doc.lines.firstOrNull()
+            val lyricText = line?.text.orEmpty().ifEmpty { doc.title }
             val delayMs = if (line != null && line.end > line.start) (line.end - line.start).toInt() else 0
             val hasMeta = doc.title.isNotEmpty() || doc.artist.isNotEmpty() || doc.album.isNotEmpty()
             handleLyricEvent(
@@ -770,15 +778,32 @@ class SystemUILyric : BaseHook() {
         }
     }
 
-    @SuppressLint("UnspecifiedRegisterReceiverFlag")
-    private fun registerSuperLyric(context: Context) {
+    private fun ensureSuperLyricRegistered(pullLatest: Boolean = false, retriesLeft: Int = 15) {
         runCatching {
             val result = SuperLyric.receiver().register(superLyricV4Listener)
             "SuperLyric v4 receiver register result: $result".log()
-            SuperLyric.receiver().latest()?.let { superLyricV4Listener.onLyric(it) }
+            if (result == com.hchen.superlyricapi.Receiver.RegisterResult.OK) {
+                if (pullLatest) {
+                    SuperLyric.receiver().latest()?.let { superLyricV4Listener.onLyric(it) }
+                }
+            } else if (retriesLeft > 0) {
+                handler.postDelayed({
+                    ensureSuperLyricRegistered(pullLatest = true, retriesLeft = retriesLeft - 1)
+                }, 2000L)
+            }
         }.onFailure {
             it.log()
+            if (retriesLeft > 0) {
+                handler.postDelayed({
+                    ensureSuperLyricRegistered(pullLatest = true, retriesLeft = retriesLeft - 1)
+                }, 2000L)
+            }
         }
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private fun registerSuperLyric(context: Context) {
+        ensureSuperLyricRegistered(pullLatest = true)
 
         // Legacy SuperLyric 1.x / 2.x broadcast fallback
         runCatching {

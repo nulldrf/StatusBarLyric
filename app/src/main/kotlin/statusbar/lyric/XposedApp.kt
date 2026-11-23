@@ -100,7 +100,7 @@ class XposedApp : Application(), XposedServiceHelper.OnServiceListener {
                             putStringSet(key, value as Set<String>)
                         }
                     }
-                    apply()
+                    commit()
                 }
             } catch (t: Throwable) {
                 t.log()
@@ -113,7 +113,7 @@ class XposedApp : Application(), XposedServiceHelper.OnServiceListener {
                 val editor = remotePrefs.edit()
                 remotePrefs.all.keys.forEach { editor.remove(it) }
                 editor.clear()
-                editor.apply()
+                editor.commit()
             } catch (t: Throwable) {
                 t.log()
             }

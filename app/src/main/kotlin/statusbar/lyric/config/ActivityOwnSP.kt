@@ -118,7 +118,7 @@ object ActivityOwnSP {
                 val localEditor = ownSP.edit()
                 copyEntries(remoteAll, localEditor, overwrite = true, existing = localAll)
                 localEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION)
-                localEditor.apply()
+                localEditor.commit()
                 "Restored preferences from Xposed RemotePreferences".log()
                 return
             }
@@ -126,17 +126,17 @@ object ActivityOwnSP {
             if (remoteAll.isNotEmpty()) {
                 val localEditor = ownSP.edit()
                 copyEntries(remoteAll, localEditor, overwrite = false, existing = localAll)
-                localEditor.apply()
+                localEditor.commit()
             }
 
             val mergedLocal = ownSP.all
             val remoteEditor = remotePrefs.edit()
             copyEntries(mergedLocal, remoteEditor, overwrite = true, existing = remoteAll)
             remoteEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION)
-            remoteEditor.apply()
+            remoteEditor.commit()
 
             if (ownSP.getInt("ver", 0) < BuildConfig.COMPOSE_CONFIG_VERSION) {
-                ownEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION).apply()
+                ownEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION).commit()
             }
             "Synced ${mergedLocal.size} preference keys to Xposed RemotePreferences".log()
         } catch (t: Throwable) {

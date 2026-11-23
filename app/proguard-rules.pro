@@ -1,4 +1,5 @@
 -optimizationpasses 5
+-keepattributes SourceFile,LineNumberTable,Signature,InnerClasses,EnclosingMethod,*Annotation*,AnnotationDefault
 -adaptresourcefilecontents META-INF/xposed/java_init.list
 -keep public class statusbar.lyric.hook.MainHook {
     public <init>();
@@ -7,6 +8,9 @@
     public <init>();
 }
 -keep class statusbar.lyric.tools.ActivityTools { isHook(); }
+-keep class statusbar.lyric.data.** { *; }
+-keep class com.hchen.superlyricapi.** { *; }
+-keep class io.github.libxposed.service.** { *; }
 -dontskipnonpubliclibraryclassmembers
 -allowaccessmodification
 -optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*,!code/allocation/variable

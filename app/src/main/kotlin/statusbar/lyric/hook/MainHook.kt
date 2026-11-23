@@ -22,6 +22,9 @@
 
 package statusbar.lyric.hook
 
+import android.annotation.SuppressLint
+import android.content.res.AssetManager
+import android.content.res.Resources
 import android.os.Build
 import androidx.annotation.RequiresApi
 import io.github.kyuubiran.ezxhelper.xposed.EzXposed
@@ -52,37 +55,46 @@ class MainHook : XposedModule() {
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         instance = this
-        EzXposed.initOnModuleLoaded(this, param)
-        EzXposed.initModuleResources()
+        runCatching {
+            EzXposed.initOnModuleLoaded(this, param)
+        }
+        ensureModuleResources()
         XposedOwnSP.remotePrefs = runCatching { getRemotePreferences(Config.CONFIG_NAME) }.getOrNull()
+        config.update()
         LogTools.init(config.outLog)
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
     override fun onPackageLoaded(param: PackageLoadedParam) {
-        EzXposed.initOnPackageLoaded(param)
+        runCatching {
+            EzXposed.initOnPackageLoaded(param)
+        }
     }
 
     override fun onPackageReady(param: PackageReadyParam) {
         if (!param.isFirstPackage) return
-        EzXposed.initOnPackageReady(param)
+        runCatching {
+            EzXposed.initOnPackageReady(param)
+        }
+        ensureModuleResources()
         if (XposedOwnSP.remotePrefs == null) {
             XposedOwnSP.remotePrefs = runCatching { getRemotePreferences(Config.CONFIG_NAME) }.getOrNull()
         }
+        config.update()
         LogTools.init(config.outLog)
 
         when (param.packageName) {
             "com.android.systemui" -> {
                 if (!config.masterSwitch) {
-                    moduleRes.getString(R.string.master_off).log()
+                    safeString(R.string.master_off, "Master switch is off").log()
                     return
                 }
                 "${BuildConfig.APPLICATION_ID} - ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}[${Locale.getDefault().language}] *${BuildConfig.BUILD_TYPE})".log()
                 if (config.testMode) {
-                    moduleRes.getString(R.string.hook_page).log()
+                    safeString(R.string.hook_page, "Anchor Selection Mode").log()
                     initHooks(SystemUITest())
                 } else {
-                    moduleRes.getString(R.string.lyric_mode).log()
+                    safeString(R.string.lyric_mode, "Lyric Mode").log()
                     try {
                         initHooks(SystemUILyric())
                     } catch (t: Throwable) {
@@ -97,15 +109,53 @@ class MainHook : XposedModule() {
         }
     }
 
+    @SuppressLint("DiscouragedPrivateApi", "PrivateApi")
+    private fun ensureModuleResources() {
+        val loaded = runCatching {
+            EzXposed.initModuleResources()
+            moduleRes.getString(R.string.app_name)
+            true
+        }.getOrDefault(false)
+        if (loaded) return
+
+        runCatching {
+            val sourceDir = moduleApplicationInfo.sourceDir
+            val sysRes = Resources.getSystem()
+            val assetManager = AssetManager::class.java.getDeclaredConstructor().apply {
+                isAccessible = true
+            }.newInstance()
+            val addAssetPath = AssetManager::class.java.getDeclaredMethod("addAssetPath", String::class.java).apply {
+                isAccessible = true
+            }
+            addAssetPath.invoke(assetManager, sourceDir)
+            @Suppress("DEPRECATION")
+            val fallbackRes = Resources(assetManager, sysRes.displayMetrics, sysRes.configuration)
+            EzXposed::class.java.getDeclaredField("modulePath").apply {
+                isAccessible = true
+                set(null, sourceDir)
+            }
+            EzXposed::class.java.getDeclaredField("moduleRes").apply {
+                isAccessible = true
+                set(null, fallbackRes)
+            }
+        }.onFailure {
+            it.log()
+        }
+    }
+
+    private fun safeString(resId: Int, fallback: String): String {
+        return runCatching { moduleRes.getString(resId) }.getOrDefault(fallback)
+    }
+
     private fun initHooks(vararg hook: BaseHook) {
         hook.forEach {
             try {
                 if (it.isInit) return
                 it.init()
                 it.isInit = true
-                "${moduleRes.getString(R.string.hook_succeeded)}:${it.javaClass.simpleName}".log()
-            } catch (e: Exception) {
-                "${moduleRes.getString(R.string.hook_failed)}:${it.javaClass.simpleName}".log()
+                "${safeString(R.string.hook_succeeded, "Hook Succeeded")}:${it.javaClass.simpleName}".log()
+            } catch (e: Throwable) {
+                "${safeString(R.string.hook_failed, "Hook Failed")}:${it.javaClass.simpleName}".log()
                 e.log()
             }
         }

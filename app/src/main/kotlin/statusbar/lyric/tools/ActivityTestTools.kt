@@ -25,6 +25,8 @@ package statusbar.lyric.tools
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
+import statusbar.lyric.BuildConfig
 import statusbar.lyric.data.Data
 import statusbar.lyric.tools.LogTools.log
 
@@ -33,22 +35,28 @@ object ActivityTestTools {
 
     fun Context.getClass() {
         this.sendBroadcast(Intent("TestReceiver").apply {
+            addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             putExtra("Type", "GetClass")
             "GetClass".log()
         })
     }
 
     fun Context.receiveClass(dataList: ArrayList<Data>) {
+        val bundles = ArrayList<Bundle>(dataList.size)
+        dataList.forEach { bundles.add(it.toBundle()) }
         sendBroadcast(Intent("AppTestReceiver").apply {
+            addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+            setPackage(BuildConfig.APPLICATION_ID)
             putExtra("Type", "ReceiveClass")
-            putExtra("DataList", dataList)
+            putParcelableArrayListExtra("DataBundleList", bundles)
         })
     }
 
     fun Context.showView(data: Data) {
         sendBroadcast(Intent("TestReceiver").apply {
+            addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             putExtra("Type", "ShowView")
-            putExtra("Data", data)
+            putExtra("DataBundle", data.toBundle())
         })
     }
 }
