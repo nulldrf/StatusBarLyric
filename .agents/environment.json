@@ -1,0 +1,3 @@
+{
+  "install": "export ANDROID_HOME=\"${ANDROID_HOME:-/opt/android-sdk}\"; SDKM=\"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager\"; if [ -x \"$SDKM\" ] && { [ ! -d \"$ANDROID_HOME/platforms/android-36\" ] || [ ! -d \"$ANDROID_HOME/build-tools/35.0.0\" ]; }; then yes | \"$SDKM\" --licenses >/dev/null || true; \"$SDKM\" --install 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'; fi; chmod +x ./gradlew && ./gradlew --no-daemon --console=plain :app:dependencies --configuration debugRuntimeClasspath -q > /dev/null"
+}
