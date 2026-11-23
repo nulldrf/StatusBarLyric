@@ -5,6 +5,8 @@ app/debug
 !app/libs/classes.jar
 /.idea/
 local.properties
+keystore.properties
+*.jks
 build
 hs_err_*.log
 /.kotlin

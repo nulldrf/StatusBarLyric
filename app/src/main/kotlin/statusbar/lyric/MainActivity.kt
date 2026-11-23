@@ -55,7 +55,8 @@ class MainActivity : ComponentActivity() {
     lateinit var openDocumentLauncher: ActivityResultLauncher<Intent>
 
     companion object {
-        lateinit var appContext: Context private set
+        lateinit var appContext: Context
+            internal set
 
         var isLoad: Boolean = false
 
@@ -91,7 +92,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        isLoad = isHook()
+        isLoad = XposedApp.isModuleActive || isHook()
+        XposedApp.isModuleActive = isLoad
         init()
 
         setContent {
@@ -105,6 +107,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun init() {
+        ActivityOwnSP.migrateLegacyPreferences(this)
         ConfigTools(ActivityOwnSP.ownSP)
         updateConfigVer()
         requestPermission()

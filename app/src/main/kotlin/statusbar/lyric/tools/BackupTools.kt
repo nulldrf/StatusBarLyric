@@ -28,6 +28,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import org.json.JSONObject
 import statusbar.lyric.MainActivity
+import statusbar.lyric.config.ActivityOwnSP
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -81,7 +82,7 @@ object BackupTools {
                             when (val value = get(key)) {
                                 is String -> {
                                     if (value.startsWith("Float:")) {
-                                        edit.putFloat(key, value.substring(6).toFloat() / 1000)
+                                        edit.putFloat(key, value.substring(6).toFloat() / 1000f)
                                     } else {
                                         edit.putString(key, value)
                                     }
@@ -89,11 +90,14 @@ object BackupTools {
 
                                 is Boolean -> edit.putBoolean(key, value)
                                 is Int -> edit.putInt(key, value)
+                                is Long -> edit.putLong(key, value)
+                                is Double -> edit.putFloat(key, value.toFloat())
                             }
                         }
                     }
-                    edit.apply()
-                    ActivityTools.showToastOnLooper("Load successfully")
+                    edit.commit()
+                    ActivityOwnSP.syncAllToRemote()
+                    ActivityTools.showToastOnLooper("Configuration loaded successfully")
                 } else {
                     ActivityTools.showToastOnLooper("Load failed: Empty file")
                 }
@@ -116,7 +120,7 @@ object BackupTools {
                     }
                 }.toString())
             }
-            ActivityTools.showToastOnLooper("Save successfully")
+            ActivityTools.showToastOnLooper("Configuration saved successfully")
         } catch (e: Throwable) {
             ActivityTools.showToastOnLooper("Save failed\n$e")
         }

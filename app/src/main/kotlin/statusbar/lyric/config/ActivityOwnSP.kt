@@ -23,35 +23,136 @@
 package statusbar.lyric.config
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.content.SharedPreferences
+import io.github.libxposed.service.XposedService
 import statusbar.lyric.BuildConfig
 import statusbar.lyric.MainActivity
+import statusbar.lyric.XposedApp
 import statusbar.lyric.config.Config.Companion.CONFIG_NAME
+import statusbar.lyric.tools.LogTools.log
 import statusbar.lyric.tools.Tools
 
 @SuppressLint("StaticFieldLeak")
 object ActivityOwnSP {
-    val ownSP by lazy { Tools.getSP(MainActivity.appContext, CONFIG_NAME) }
-    val config by lazy { Config(ownSP) }
+    val ownSP: SharedPreferences by lazy { Tools.getSP(MainActivity.appContext, CONFIG_NAME) }
+    val config: Config by lazy { Config(ownSP, readOnly = false) }
     private val ownEditor by lazy { ownSP.edit() }
 
-    private fun set(key: String, any: Any) {
-        when (any) {
-            is Int -> ownEditor.putInt(key, any)
-            is Float -> ownEditor.putFloat(key, any)
-            is String -> ownEditor.putString(key, any)
-            is Boolean -> ownEditor.putBoolean(key, any)
-            is Long -> ownEditor.putLong(key, any)
+    private fun copyEntries(from: Map<String, *>, toEditor: SharedPreferences.Editor, overwrite: Boolean, existing: Map<String, *>) {
+        from.forEach { (key, value) ->
+            if (!overwrite && existing.containsKey(key)) return@forEach
+            when (value) {
+                is Int -> toEditor.putInt(key, value)
+                is Float -> toEditor.putFloat(key, value)
+                is String -> {
+                    if (value.startsWith("Float:")) {
+                        val parsed = value.substring(6).toFloatOrNull()
+                        if (parsed != null) {
+                            toEditor.putFloat(key, parsed / 1000f)
+                        } else {
+                            toEditor.putString(key, value)
+                        }
+                    } else {
+                        toEditor.putString(key, value)
+                    }
+                }
+                is Boolean -> toEditor.putBoolean(key, value)
+                is Long -> toEditor.putLong(key, value)
+                is Set<*> -> {
+                    @Suppress("UNCHECKED_CAST")
+                    toEditor.putStringSet(key, value as Set<String>)
+                }
+            }
         }
-        ownEditor.apply()
     }
 
-    private fun remove(key: String) {
-        ownEditor.remove(key).apply()
+    /**
+     * Migrates preferences from any legacy SharedPreferences storage locations (credential-protected
+     * or legacy Lyric_Config) into the primary device-protected COMPOSE_CONFIG SharedPreferences.
+     */
+    fun migrateLegacyPreferences(context: Context) {
+        try {
+            val dpContext = context.createDeviceProtectedStorageContext()
+            val targetSp = dpContext.getSharedPreferences(CONFIG_NAME, Context.MODE_PRIVATE)
+            val existing = targetSp.all
+            val editor = targetSp.edit()
+            var migrated = false
+
+            val candidates = listOf(
+                runCatching { context.getSharedPreferences(CONFIG_NAME, Context.MODE_PRIVATE) }.getOrNull(),
+                runCatching { dpContext.getSharedPreferences("Lyric_Config", Context.MODE_PRIVATE) }.getOrNull(),
+                runCatching { context.getSharedPreferences("Lyric_Config", Context.MODE_PRIVATE) }.getOrNull()
+            )
+
+            candidates.forEach { legacySp ->
+                if (legacySp != null && legacySp !== targetSp) {
+                    val map = legacySp.all
+                    if (map.isNotEmpty()) {
+                        copyEntries(map, editor, overwrite = false, existing = existing)
+                        migrated = true
+                    }
+                }
+            }
+
+            if (migrated) {
+                editor.apply()
+                "Migrated legacy local preferences into $CONFIG_NAME".log()
+            }
+        } catch (t: Throwable) {
+            t.log()
+        }
+    }
+
+    /**
+     * Synchronizes local preferences with libxposed API 101 RemotePreferences so that users
+     * upgrading from legacy Xposed API 82 keep all of their existing preferences and keys.
+     */
+    fun syncWithRemoteService(service: XposedService) {
+        try {
+            val remotePrefs = service.getRemotePreferences(CONFIG_NAME)
+            val localAll = ownSP.all
+            val remoteAll = remotePrefs.all
+
+            if (localAll.isEmpty() && remoteAll.isNotEmpty()) {
+                val localEditor = ownSP.edit()
+                copyEntries(remoteAll, localEditor, overwrite = true, existing = localAll)
+                localEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION)
+                localEditor.apply()
+                "Restored preferences from Xposed RemotePreferences".log()
+                return
+            }
+
+            if (remoteAll.isNotEmpty()) {
+                val localEditor = ownSP.edit()
+                copyEntries(remoteAll, localEditor, overwrite = false, existing = localAll)
+                localEditor.apply()
+            }
+
+            val mergedLocal = ownSP.all
+            val remoteEditor = remotePrefs.edit()
+            copyEntries(mergedLocal, remoteEditor, overwrite = true, existing = remoteAll)
+            remoteEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION)
+            remoteEditor.apply()
+
+            if (ownSP.getInt("ver", 0) < BuildConfig.COMPOSE_CONFIG_VERSION) {
+                ownEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION).apply()
+            }
+            "Synced ${mergedLocal.size} preference keys to Xposed RemotePreferences".log()
+        } catch (t: Throwable) {
+            t.log()
+        }
+    }
+
+    fun syncAllToRemote() {
+        val service = XposedApp.xposedService ?: return
+        syncWithRemoteService(service)
     }
 
     fun updateConfigVer() {
         if (ownSP.getInt("ver", 0) < BuildConfig.COMPOSE_CONFIG_VERSION) {
-
+            ownEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION).apply()
+            XposedApp.syncPreference(CONFIG_NAME, "ver", BuildConfig.COMPOSE_CONFIG_VERSION)
         }
     }
 }

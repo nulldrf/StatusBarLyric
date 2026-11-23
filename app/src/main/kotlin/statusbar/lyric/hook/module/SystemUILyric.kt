@@ -23,12 +23,12 @@
 package statusbar.lyric.hook.module
 
 import android.annotation.SuppressLint
-import android.app.AndroidAppHelper
 import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -37,11 +37,16 @@ import android.graphics.PorterDuff
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.MediaMetadata
 import android.media.session.PlaybackState
+import android.os.Binder
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.os.Message
+import android.os.Parcel
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Gravity
@@ -53,18 +58,20 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.graphics.toColorInt
 import androidx.core.util.Consumer
-import com.github.kyuubiran.ezxhelper.ClassUtils.loadClassOrNull
-import com.github.kyuubiran.ezxhelper.EzXHelper.moduleRes
-import com.github.kyuubiran.ezxhelper.HookFactory
-import com.github.kyuubiran.ezxhelper.HookFactory.`-Static`.createHook
-import com.github.kyuubiran.ezxhelper.ObjectHelper.Companion.objectHelper
-import com.github.kyuubiran.ezxhelper.finders.ConstructorFinder.`-Static`.constructorFinder
-import com.github.kyuubiran.ezxhelper.finders.MethodFinder.`-Static`.methodFinder
-import com.hchen.superlyricapi.ISuperLyric
-import com.hchen.superlyricapi.SuperLyricData
-import com.hchen.superlyricapi.SuperLyricTool
-import com.hchen.superlyricapi.SuperLyricTool.base64ToBitmap
+import com.hchen.superlyricapi.LyricListener
+import com.hchen.superlyricapi.LyricView
+import com.hchen.superlyricapi.SuperLyric
+import com.hchen.superlyricapi.model.Stop
+import io.github.kyuubiran.ezxhelper.core.finder.ConstructorFinder.`-Static`.constructorFinder
+import io.github.kyuubiran.ezxhelper.core.finder.MethodFinder.`-Static`.methodFinder
+import io.github.kyuubiran.ezxhelper.core.helper.ObjectHelper.`-Static`.objectHelper
+import io.github.kyuubiran.ezxhelper.core.util.ClassUtil.loadClassOrNull
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed.moduleRes
+import io.github.kyuubiran.ezxhelper.xposed.dsl.HookFactory
+import io.github.kyuubiran.ezxhelper.xposed.dsl.HookFactory.`-Static`.createHook
 import statusbar.lyric.R
+import statusbar.lyric.config.XposedOwnSP
 import statusbar.lyric.config.XposedOwnSP.config
 import statusbar.lyric.hook.BaseHook
 import statusbar.lyric.hook.module.xiaomi.FocusNotifyController
@@ -77,10 +84,12 @@ import statusbar.lyric.tools.LyricViewTools.cancelAnimation
 import statusbar.lyric.tools.LyricViewTools.hideView
 import statusbar.lyric.tools.LyricViewTools.randomAnima
 import statusbar.lyric.tools.LyricViewTools.showView
+import statusbar.lyric.tools.Tools.base64ToBitmap
 import statusbar.lyric.tools.Tools.callMethod
 import statusbar.lyric.tools.Tools.existField
 import statusbar.lyric.tools.Tools.getObjectField
 import statusbar.lyric.tools.Tools.getObjectFieldIfExist
+import statusbar.lyric.tools.Tools.getObjectOrNullAs
 import statusbar.lyric.tools.Tools.goMainThread
 import statusbar.lyric.tools.Tools.ifNotNull
 import statusbar.lyric.tools.Tools.isLandscape
@@ -97,7 +106,7 @@ import kotlin.math.abs
 import kotlin.math.min
 
 class SystemUILyric : BaseHook() {
-    private val context: Context by lazy { AndroidAppHelper.currentApplication() }
+    private val context: Context by lazy { EzXposed.appContext }
 
     private var lastLyric: String = ""
     private var lastColor: Int by observableChange(Color.WHITE) { oldValue, newValue ->
@@ -222,7 +231,9 @@ class SystemUILyric : BaseHook() {
         "Initializing Hook".log()
         Application::class.java.methodFinder().filterByName("attach").single().createHook {
             after { hook ->
-                registerSuperLyric(hook.args[0] as Context)
+                val appContext = hook.args[0] as Context
+                EzXposed.initAppContext(appContext)
+                registerSuperLyric(appContext)
             }
         }
 
@@ -334,7 +345,7 @@ class SystemUILyric : BaseHook() {
                         }
                     } else {
                         notificationIconArea =
-                            clazz.superclass.getField(method).get(hookParam.thisObject) as View
+                            clazz.superclass?.getField(method)?.get(hookParam.thisObject) as? View
                     }
                 }
             }
@@ -583,6 +594,11 @@ class SystemUILyric : BaseHook() {
     private var playingApp: String = ""
     private var updateConfig: UpdateConfig = UpdateConfig()
     private var screenLockReceiver: ScreenLockReceiver = ScreenLockReceiver()
+    private val remotePrefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        if (isReady) {
+            updateConfig()
+        }
+    }
     private val timeoutRestore: Int = 0
     private val handler: Handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
@@ -595,63 +611,188 @@ class SystemUILyric : BaseHook() {
         }
     }
     private var lastRunnable: Runnable? = null
-    private val showTitleConsumer: Consumer<SuperLyricData> = object : Consumer<SuperLyricData> {
-        override fun accept(value: SuperLyricData) {
-            if (!isMusicPlaying) return
-            if (playingApp != value.packageName) return
+    private data class TitlePayload(val packageName: String, val title: String)
+    private val showTitleConsumer: Consumer<TitlePayload> = Consumer { value ->
+        if (!isMusicPlaying) return@Consumer
+        if (playingApp != value.packageName) return@Consumer
 
-            this@SystemUILyric.title = value.title
+        this@SystemUILyric.title = value.title
+    }
+
+    private fun handleStopEvent(packageName: String) {
+        if (!isReady) return
+        if (playingApp.isNotEmpty() && packageName.isNotEmpty() && playingApp != packageName) return
+
+        lastLyric = ""
+        playingApp = ""
+        isMusicPlaying = false
+        if (lastRunnable.isNotNull()) handler.removeCallbacks(lastRunnable!!)
+        if (handler.hasMessages(timeoutRestore)) handler.removeMessages(timeoutRestore)
+        updateLyricState(showLyric = false)
+    }
+
+    private fun handleLyricEvent(
+        packageName: String,
+        lyric: String,
+        delay: Int,
+        hasMetadata: Boolean,
+        title: String,
+        artist: String,
+        album: String,
+        base64Icon: String
+    ) {
+        if (!isReady) return
+
+        if (packageName.isNotEmpty()) {
+            playingApp = packageName
+        }
+        if (hasMetadata) {
+            if (config.titleSwitch) {
+                if (lastArtist != artist || lastAlbum != album) {
+                    lastArtist = artist
+                    lastAlbum = album
+
+                    if (lastRunnable.isNotNull()) handler.removeCallbacks(lastRunnable!!)
+                    val payload = TitlePayload(playingApp, title)
+                    lastRunnable = Runnable { showTitleConsumer.accept(payload) }
+
+                    ("Title: $title, Artist: $lastArtist, Album: $lastAlbum").log()
+                }
+            }
+        }
+        if (lyric.isEmpty()) return
+        isMusicPlaying = true
+        lastLyric = lyric
+        if (lastRunnable.isNotNull()) handler.postDelayed(lastRunnable!!, 800)
+
+        changeIcon(playingApp, base64Icon)
+        updateLyricState(delay = delay)
+        if (handler.hasMessages(timeoutRestore)) {
+            handler.removeMessages(timeoutRestore)
+            handler.sendEmptyMessageDelayed(timeoutRestore, 10000L)
+        } else {
+            handler.sendEmptyMessageDelayed(timeoutRestore, 10000L)
+        }
+    }
+
+    private val superLyricV4Listener = object : LyricListener {
+        override fun onLyric(view: LyricView) {
+            val state = view.state
+            if (state == com.hchen.superlyricapi.model.PlaybackState.BUFFERING) return
+            if (state == com.hchen.superlyricapi.model.PlaybackState.PAUSED ||
+                state == com.hchen.superlyricapi.model.PlaybackState.STOPPED
+            ) {
+                handleStopEvent(view.publisher.orEmpty())
+                return
+            }
+            val doc = view.lyric
+            val line = view.line
+            val lyricText = line?.text.orEmpty()
+            val delayMs = if (line != null && line.end > line.start) (line.end - line.start).toInt() else 0
+            val hasMeta = doc.title.isNotEmpty() || doc.artist.isNotEmpty() || doc.album.isNotEmpty()
+            handleLyricEvent(
+                packageName = view.publisher.orEmpty(),
+                lyric = lyricText,
+                delay = delayMs,
+                hasMetadata = hasMeta,
+                title = doc.title,
+                artist = doc.artist,
+                album = doc.album,
+                base64Icon = ""
+            )
+        }
+
+        override fun onStop(stop: Stop) {
+            handleStopEvent(stop.publisher.orEmpty())
+        }
+    }
+
+    /**
+     * Legacy SuperLyric 1.x / 2.x broadcast binder fallback (`com.hchen.superlyricapi.ISuperLyric`).
+     */
+    private val legacySuperLyricBinder = object : Binder() {
+        private val descriptor = "com.hchen.superlyricapi.ISuperLyric"
+        private val transactionOnStop = IBinder.FIRST_CALL_TRANSACTION + 0
+        private val transactionOnSuperLyric = IBinder.FIRST_CALL_TRANSACTION + 1
+
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            return when (code) {
+                IBinder.INTERFACE_TRANSACTION -> {
+                    reply?.writeString(descriptor)
+                    true
+                }
+                transactionOnStop -> {
+                    data.enforceInterface(descriptor)
+                    if (data.readInt() != 0) {
+                        data.readString() // lyric
+                        val pkg = data.readString().orEmpty()
+                        data.readString() // base64Icon
+                        data.readInt() // delay
+                        @Suppress("DEPRECATION")
+                        data.readParcelable<MediaMetadata>(MediaMetadata::class.java.classLoader)
+                        @Suppress("DEPRECATION")
+                        val playbackState = data.readParcelable<PlaybackState>(PlaybackState::class.java.classLoader)
+                        if (playbackState?.state != PlaybackState.STATE_BUFFERING) {
+                            handleStopEvent(pkg)
+                        }
+                    }
+                    reply?.writeNoException()
+                    true
+                }
+                transactionOnSuperLyric -> {
+                    data.enforceInterface(descriptor)
+                    if (data.readInt() != 0) {
+                        val lyricText = data.readString().orEmpty()
+                        val pkg = data.readString().orEmpty()
+                        val icon = data.readString().orEmpty()
+                        val delayMs = data.readInt()
+                        @Suppress("DEPRECATION")
+                        val metadata = data.readParcelable<MediaMetadata>(MediaMetadata::class.java.classLoader)
+                        val titleText = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty()
+                        val artistText = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty()
+                        val albumText = metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty()
+                        handleLyricEvent(
+                            packageName = pkg,
+                            lyric = lyricText,
+                            delay = delayMs,
+                            hasMetadata = metadata != null,
+                            title = titleText,
+                            artist = artistText,
+                            album = albumText,
+                            base64Icon = icon
+                        )
+                    }
+                    reply?.writeNoException()
+                    true
+                }
+                else -> super.onTransact(code, data, reply, flags)
+            }
         }
     }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private fun registerSuperLyric(context: Context) {
-        SuperLyricTool.registerSuperLyric(context, object : ISuperLyric.Stub() {
-            override fun onStop(data: SuperLyricData?) {
-                if (data == null) return
-                if (!isReady) return
-                if (data.playbackState?.state == PlaybackState.STATE_BUFFERING) return
-                if (playingApp.isNotEmpty() && playingApp != data.packageName) return
+        runCatching {
+            val result = SuperLyric.receiver().register(superLyricV4Listener)
+            "SuperLyric v4 receiver register result: $result".log()
+            SuperLyric.receiver().latest()?.let { superLyricV4Listener.onLyric(it) }
+        }.onFailure {
+            it.log()
+        }
 
-                lastLyric = ""
-                playingApp = ""
-                isMusicPlaying = false
-                if (lastRunnable.isNotNull()) handler.removeCallbacks(lastRunnable!!)
-                if (handler.hasMessages(timeoutRestore)) handler.removeMessages(timeoutRestore)
-                updateLyricState(showLyric = false)
+        // Legacy SuperLyric 1.x / 2.x broadcast fallback
+        runCatching {
+            val intent = Intent("Super_Lyric").apply {
+                putExtras(Bundle().apply {
+                    putBinder("super_lyric_binder", legacySuperLyricBinder)
+                })
             }
+            context.sendBroadcast(intent)
+        }.onFailure {
+            it.log()
+        }
 
-            override fun onSuperLyric(data: SuperLyricData?) {
-                if (data == null) return
-                if (!isReady) return
-
-                playingApp = data.packageName
-                if (data.isExistMediaMetadata) {
-                    if (config.titleSwitch) {
-                        if (lastArtist != data.artist || lastAlbum != data.album) {
-                            lastArtist = data.artist
-                            lastAlbum = data.album
-
-                            if (lastRunnable.isNotNull()) handler.removeCallbacks(lastRunnable!!)
-                            lastRunnable = Runnable { showTitleConsumer.accept(data) }
-
-                            ("Title: " + data.title + ", Artist: " + lastArtist + ", Album: " + lastAlbum).log()
-                        }
-                    }
-                }
-                if (data.lyric.isEmpty()) return
-                isMusicPlaying = true
-                lastLyric = data.lyric
-                if (lastRunnable.isNotNull()) handler.postDelayed(lastRunnable!!, 800)
-
-                changeIcon(data)
-                updateLyricState(delay = data.delay)
-                if (handler.hasMessages(timeoutRestore)) {
-                    handler.removeMessages(timeoutRestore)
-                    handler.sendEmptyMessageDelayed(timeoutRestore, 10000L)
-                } else handler.sendEmptyMessageDelayed(timeoutRestore, 10000L)
-            }
-        })
+        XposedOwnSP.remotePrefs?.registerOnSharedPreferenceChangeListener(remotePrefChangeListener)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(
@@ -737,15 +878,15 @@ class SystemUILyric : BaseHook() {
     }
 
     // 更改图标
-    private fun changeIcon(it: SuperLyricData) {
+    private fun changeIcon(packageName: String, base64Icon: String) {
         if (!iconSwitch) return
         if (!isMusicPlaying) return
 
         lastBase64Icon = config.changeAllIcons.ifEmpty {
-            if (it.base64Icon != "") {
-                it.base64Icon
+            if (base64Icon.isNotEmpty()) {
+                base64Icon
             } else {
-                config.getDefaultIcon(it.packageName)
+                config.getDefaultIcon(packageName)
             }
         }
     }

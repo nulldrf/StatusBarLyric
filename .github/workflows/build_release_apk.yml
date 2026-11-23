@@ -1,0 +1,39 @@
+name: Build release APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+
+jobs:
+  build-release-apk:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'zulu'
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Write sign info
+        run: |
+          if [ -n "${{ secrets.KEYSTORE }}" ]; then
+            echo "${{ secrets.KEYSTORE }}" | base64 -d > ${{ github.workspace }}/key.jks
+            echo storeFile='${{ github.workspace }}/key.jks' >> keystore.properties
+            echo storePassword='${{ secrets.KEYSTORE_PASSWORD }}' >> keystore.properties
+            echo keyAlias='${{ secrets.KEY_ALIAS }}' >> keystore.properties
+            echo keyPassword='${{ secrets.KEY_PASSWORD }}' >> keystore.properties
+          fi
+      - name: Build release APK
+        run: ./gradlew assembleRelease
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Release APK
+          path: app/build/outputs/apk/release/*.apk
+          archive: false

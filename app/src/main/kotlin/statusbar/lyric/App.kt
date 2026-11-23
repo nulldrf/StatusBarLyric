@@ -22,41 +22,35 @@
 
 package statusbar.lyric
 
-import android.annotation.SuppressLint
 import android.content.res.Configuration
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavGraphBuilder
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
+import androidx.compose.ui.util.lerp
+import kotlinx.serialization.Serializable
 import statusbar.lyric.config.ActivityOwnSP.config
 import statusbar.lyric.ui.page.ChoosePage
 import statusbar.lyric.ui.page.ExtendPage
@@ -69,29 +63,161 @@ import statusbar.lyric.ui.page.TestPage
 import statusbar.lyric.ui.theme.AppTheme
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.VerticalDivider
+import top.yukonga.miuix.kmp.blur.BlendColorEntry
+import top.yukonga.miuix.kmp.blur.BlurDefaults
+import top.yukonga.miuix.kmp.blur.LayerBackdrop
+import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import top.yukonga.miuix.kmp.blur.textureBlur
+import top.yukonga.miuix.kmp.nav.core.NavBackStack
+import top.yukonga.miuix.kmp.nav.core.NavCornerClipMode
+import top.yukonga.miuix.kmp.nav.core.NavDisplay
+import top.yukonga.miuix.kmp.nav.core.NavDisplayEffects
+import top.yukonga.miuix.kmp.nav.core.NavKey
+import top.yukonga.miuix.kmp.nav.core.rememberNavBackStack
+import top.yukonga.miuix.kmp.nav.core.rememberNavSystemCornerRadius
+import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
+import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.getWindowSize
 
-@SuppressLint("UnusedBoxWithConstraintsScope")
+@Serializable
+sealed interface Route : NavKey {
+    val routeName: String
+
+    @Serializable
+    data object HomePage : Route {
+        override val routeName: String get() = "HomePage"
+    }
+
+    @Serializable
+    data object ChoosePage : Route {
+        override val routeName: String get() = "ChoosePage"
+    }
+
+    @Serializable
+    data object TestPage : Route {
+        override val routeName: String get() = "TestPage"
+    }
+
+    @Serializable
+    data object MenuPage : Route {
+        override val routeName: String get() = "MenuPage"
+    }
+
+    @Serializable
+    data object LyricPage : Route {
+        override val routeName: String get() = "LyricPage"
+    }
+
+    @Serializable
+    data object IconPage : Route {
+        override val routeName: String get() = "IconPage"
+    }
+
+    @Serializable
+    data object ExtendPage : Route {
+        override val routeName: String get() = "ExtendPage"
+    }
+
+    @Serializable
+    data object SystemSpecialPage : Route {
+        override val routeName: String get() = "SystemSpecialPage"
+    }
+
+    companion object {
+        fun fromName(name: String): Route = when (name) {
+            "ChoosePage" -> ChoosePage
+            "TestPage" -> TestPage
+            "MenuPage" -> MenuPage
+            "LyricPage" -> LyricPage
+            "IconPage" -> IconPage
+            "ExtendPage" -> ExtendPage
+            "SystemSpecialPage" -> SystemSpecialPage
+            else -> HomePage
+        }
+    }
+}
+
+class AppNavigator(val backStack: NavBackStack) {
+    val currentRoute: String
+        get() = (backStack.lastOrNull() as? Route)?.routeName ?: "HomePage"
+
+    fun navigate(route: String, popUpToRoute: String? = "HomePage") {
+        val target = Route.fromName(route)
+        if (popUpToRoute != null) {
+            while (backStack.size > 1 && (backStack.last() as? Route)?.routeName != popUpToRoute) {
+                backStack.removeAt(backStack.lastIndex)
+            }
+        }
+        if (target !in backStack) {
+            backStack.add(target)
+        }
+    }
+
+    fun popBackStack() {
+        if (backStack.size > 1) {
+            backStack.removeLastOrNull()
+        }
+    }
+}
+
+@Composable
+fun rememberBlurBackdrop(): LayerBackdrop? {
+    if (!isRuntimeShaderSupported()) return null
+    val surfaceColor = MiuixTheme.colorScheme.surface
+    return rememberLayerBackdrop {
+        drawRect(surfaceColor)
+        drawContent()
+    }
+}
+
+@Composable
+fun BlurredTopBar(
+    backdrop: LayerBackdrop?,
+    scrollBehavior: ScrollBehavior,
+    content: @Composable () -> Unit
+) {
+    val collapsedFraction = scrollBehavior.state.collapsedFraction.coerceIn(0f, 1f)
+    val surfaceColor = MiuixTheme.colorScheme.surface
+    val alpha = if (collapsedFraction <= 0f) 1f else lerp(1f, 0.72f, collapsedFraction)
+    Box(
+        modifier = if (backdrop != null) {
+            Modifier.textureBlur(
+                backdrop = backdrop,
+                shape = RectangleShape,
+                blurRadius = 25f,
+                colors = BlurDefaults.blurColors(
+                    blendColors = listOf(
+                        BlendColorEntry(color = surfaceColor.copy(alpha = alpha))
+                    )
+                )
+            )
+        } else {
+            Modifier
+        }
+    ) {
+        content()
+    }
+}
+
 @Composable
 fun App() {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val navController = rememberNavController()
-
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute by remember(navBackStackEntry) {
-        derivedStateOf { navBackStackEntry?.destination?.route ?: "HomePage" }
-    }
+    val backStack = rememberNavBackStack<Route>(Route.HomePage)
+    val navigator = remember(backStack) { AppNavigator(backStack) }
+    val currentRoute = navigator.currentRoute
 
     AppTheme {
         Scaffold {
             BoxWithConstraints {
                 if (isLandscape || maxWidth > 768.dp) {
-                    LandscapeLayout(navController, currentRoute)
+                    val windowWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
+                    LandscapeLayout(navigator, currentRoute, windowWidthPx)
                 } else {
-                    PortraitLayout(navController, currentRoute)
+                    PortraitLayout(navigator, currentRoute)
                 }
             }
         }
@@ -100,67 +226,85 @@ fun App() {
 
 @Composable
 fun PortraitLayout(
-    navController: NavHostController,
+    navigator: AppNavigator,
     currentRoute: String
 ) {
-    val getWindowSize by rememberUpdatedState(getWindowSize())
-    val windowWidth = getWindowSize.width
-    val easing = CubicBezierEasing(0.12f, 0.38f, 0.2f, 1f)
+    val navCornerRadius = rememberNavSystemCornerRadius()
+    val backdropColor = MiuixTheme.colorScheme.surface
+    val effects = remember(navCornerRadius, backdropColor) {
+        NavDisplayEffects(
+            enableCornerClip = true,
+            cornerClipRadius = navCornerRadius,
+            cornerClipMode = NavCornerClipMode.Leading,
+            dimAmount = 0.5f,
+            blockInputDuringTransition = true,
+            backdropColor = backdropColor
+        )
+    }
+    val swipeDirection = if (LocalLayoutDirection.current == LayoutDirection.Rtl) {
+        NavSwipeDirection.RightToLeft
+    } else {
+        NavSwipeDirection.LeftToRight
+    }
 
-    NavHost(
-        navController = navController,
-        startDestination = "HomePage",
-        enterTransition = {
-            slideInHorizontally(
-                initialOffsetX = { windowWidth },
-                animationSpec = tween(durationMillis = 500, easing = easing)
-            )
-        },
-        exitTransition = {
-            slideOutHorizontally(
-                targetOffsetX = { -windowWidth / 5 },
-                animationSpec = tween(durationMillis = 500, easing = easing)
-            ) + fadeOut(
-                animationSpec = tween(durationMillis = 500),
-                targetAlpha = 0.5f
-            )
-        },
-        popEnterTransition = {
-            slideInHorizontally(
-                initialOffsetX = { -windowWidth / 5 },
-                animationSpec = tween(durationMillis = 500, easing = easing)
-            ) + fadeIn(
-                animationSpec = tween(durationMillis = 500),
-                initialAlpha = 0.5f
-            )
-        },
-        popExitTransition = {
-            slideOutHorizontally(
-                targetOffsetX = { windowWidth },
-                animationSpec = tween(durationMillis = 500, easing = easing)
-            )
-        }
+    NavDisplay(
+        backStack = navigator.backStack,
+        onBack = { navigator.popBackStack() },
+        transition = NavTransitions.MiuixDefault,
+        effects = effects
     ) {
-        composable("HomePage") { HomePage(navController, currentRoute) }
-        pageDestinations(navController, currentRoute)
+        entry<Route.HomePage>(swipeDismiss = NavSwipeDirection.None) {
+            HomePage(navigator, currentRoute)
+        }
+        entry<Route.ChoosePage>(swipeDismiss = swipeDirection) {
+            ChoosePage(navigator)
+        }
+        entry<Route.TestPage>(swipeDismiss = swipeDirection) {
+            TestPage(navigator, currentRoute)
+        }
+        entry<Route.MenuPage>(swipeDismiss = swipeDirection) {
+            MenuPage(navigator)
+        }
+        entry<Route.LyricPage>(swipeDismiss = swipeDirection) {
+            LyricPage(navigator)
+        }
+        entry<Route.IconPage>(swipeDismiss = swipeDirection) {
+            IconPage(navigator)
+        }
+        entry<Route.ExtendPage>(swipeDismiss = swipeDirection) {
+            ExtendPage(navigator)
+        }
+        entry<Route.SystemSpecialPage>(swipeDismiss = swipeDirection) {
+            SystemSpecialPage(navigator)
+        }
     }
 }
 
 @Composable
 fun LandscapeLayout(
-    navController: NavHostController,
-    currentRoute: String
+    navigator: AppNavigator,
+    currentRoute: String,
+    windowWidthPx: Float
 ) {
-    val getWindowSize by rememberUpdatedState(getWindowSize())
-    val windowWidth = getWindowSize.width
     var weight by remember { mutableFloatStateOf(config.pageRatio) }
     var potentialWeight by remember { mutableFloatStateOf(weight) }
     val dragState = rememberDraggableState {
-        val nextPotentialWeight = potentialWeight + it / windowWidth
-        potentialWeight = nextPotentialWeight
-        weight = nextPotentialWeight.coerceIn(0.35f, 0.65f)
+        if (windowWidthPx > 0f) {
+            val nextPotentialWeight = potentialWeight + it / windowWidthPx
+            potentialWeight = nextPotentialWeight
+            weight = nextPotentialWeight.coerceIn(0.35f, 0.65f)
+        }
     }
-    var finalWeight by remember { mutableFloatStateOf(weight) }
+    val backdropColor = MiuixTheme.colorScheme.surface
+    val effects = remember(backdropColor) {
+        NavDisplayEffects(
+            enableCornerClip = false,
+            cornerClipRadius = 0.dp,
+            dimAmount = 0f,
+            blockInputDuringTransition = true,
+            backdropColor = backdropColor
+        )
+    }
 
     Row(
         modifier = Modifier
@@ -168,9 +312,11 @@ fun LandscapeLayout(
             .padding(horizontal = 12.dp)
     ) {
         Box(
-            modifier = Modifier.weight(weight)
+            modifier = Modifier
+                .weight(weight)
+                .fillMaxHeight()
         ) {
-            HomePage(navController, currentRoute)
+            HomePage(navigator, currentRoute)
         }
         VerticalDivider(
             modifier = Modifier
@@ -181,36 +327,50 @@ fun LandscapeLayout(
                         potentialWeight = weight
                     },
                     onDragStopped = {
-                        finalWeight = weight
-                        config.pageRatio = finalWeight
+                        config.pageRatio = weight
                     }
                 )
                 .padding(horizontal = 12.dp)
         )
-        NavHost(
-            navController = navController,
-            startDestination = "HomePage",
-            modifier = Modifier.weight(1f - weight),
-            enterTransition = { fadeIn(initialAlpha = 1f) },
-            exitTransition = { fadeOut(targetAlpha = 1f) },
+        Box(
+            modifier = Modifier
+                .weight(1f - weight)
+                .fillMaxHeight()
+                .clipToBounds()
         ) {
-            composable("HomePage") { EmptyPage() }
-            pageDestinations(navController, currentRoute)
+            NavDisplay(
+                backStack = navigator.backStack,
+                onBack = { navigator.popBackStack() },
+                transition = NavTransitions.MiuixDefault,
+                effects = effects
+            ) {
+                entry<Route.HomePage>(swipeDismiss = NavSwipeDirection.None) {
+                    EmptyPage()
+                }
+                entry<Route.ChoosePage>(swipeDismiss = NavSwipeDirection.None) {
+                    ChoosePage(navigator)
+                }
+                entry<Route.TestPage>(swipeDismiss = NavSwipeDirection.None) {
+                    TestPage(navigator, currentRoute)
+                }
+                entry<Route.MenuPage>(swipeDismiss = NavSwipeDirection.None) {
+                    MenuPage(navigator)
+                }
+                entry<Route.LyricPage>(swipeDismiss = NavSwipeDirection.None) {
+                    LyricPage(navigator)
+                }
+                entry<Route.IconPage>(swipeDismiss = NavSwipeDirection.None) {
+                    IconPage(navigator)
+                }
+                entry<Route.ExtendPage>(swipeDismiss = NavSwipeDirection.None) {
+                    ExtendPage(navigator)
+                }
+                entry<Route.SystemSpecialPage>(swipeDismiss = NavSwipeDirection.None) {
+                    SystemSpecialPage(navigator)
+                }
+            }
         }
     }
-}
-
-fun NavGraphBuilder.pageDestinations(
-    navController: NavHostController,
-    currentRoute: String
-) {
-    composable("ChoosePage") { ChoosePage(navController) }
-    composable("TestPage") { TestPage(navController, currentRoute) }
-    composable("MenuPage") { MenuPage(navController) }
-    composable("LyricPage") { LyricPage(navController) }
-    composable("IconPage") { IconPage(navController) }
-    composable("ExtendPage") { ExtendPage(navController) }
-    composable("SystemSpecialPage") { SystemSpecialPage(navController) }
 }
 
 @Composable

@@ -25,12 +25,12 @@ package statusbar.lyric.hook.module.xiaomi
 import android.os.Build
 import android.view.View
 import android.widget.TextView
-import com.github.kyuubiran.ezxhelper.ClassUtils.loadClassOrNull
-import com.github.kyuubiran.ezxhelper.EzXHelper.moduleRes
-import com.github.kyuubiran.ezxhelper.HookFactory.`-Static`.createHook
-import com.github.kyuubiran.ezxhelper.ObjectHelper.Companion.objectHelper
-import com.github.kyuubiran.ezxhelper.finders.ConstructorFinder.`-Static`.constructorFinder
-import com.github.kyuubiran.ezxhelper.finders.MethodFinder.`-Static`.methodFinder
+import io.github.kyuubiran.ezxhelper.core.finder.ConstructorFinder.`-Static`.constructorFinder
+import io.github.kyuubiran.ezxhelper.core.finder.MethodFinder.`-Static`.methodFinder
+import io.github.kyuubiran.ezxhelper.core.helper.ObjectHelper.`-Static`.objectHelper
+import io.github.kyuubiran.ezxhelper.core.util.ClassUtil.loadClassOrNull
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed.moduleRes
+import io.github.kyuubiran.ezxhelper.xposed.dsl.HookFactory.`-Static`.createHook
 import statusbar.lyric.R
 import statusbar.lyric.config.XposedOwnSP.config
 import statusbar.lyric.hook.module.SystemUILyric
@@ -38,6 +38,7 @@ import statusbar.lyric.tools.LogTools.log
 import statusbar.lyric.tools.Tools.callMethod
 import statusbar.lyric.tools.Tools.existMethod
 import statusbar.lyric.tools.Tools.getObjectField
+import statusbar.lyric.tools.Tools.getObjectOrNullAs
 import statusbar.lyric.tools.Tools.ifNotNull
 import statusbar.lyric.tools.Tools.isNotNull
 import statusbar.lyric.tools.Tools.isPad
@@ -161,7 +162,7 @@ class XiaomiHooks {
                                                 setCarrierLabel(this.getObjectOrNullAs<View>("mCarrierLabel"))
                                             }
                                         } else {
-                                            setCarrierLabel(clazz.superclass.getField("mCarrierLabel").get(hookParam.thisObject) as View)
+                                            setCarrierLabel(clazz.superclass?.getField("mCarrierLabel")?.get(hookParam.thisObject) as? View)
                                         }
                                     }.onFailure { throwable -> "Hook carrier error: $throwable".log() }
                                 }

@@ -22,13 +22,18 @@
 
 package statusbar.lyric.hook
 
-import com.github.kyuubiran.ezxhelper.EzXHelper
-import com.github.kyuubiran.ezxhelper.EzXHelper.moduleRes
-import de.robv.android.xposed.IXposedHookLoadPackage
-import de.robv.android.xposed.IXposedHookZygoteInit
-import de.robv.android.xposed.callbacks.XC_LoadPackage
+import android.os.Build
+import androidx.annotation.RequiresApi
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed.moduleRes
+import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
+import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import statusbar.lyric.BuildConfig
 import statusbar.lyric.R
+import statusbar.lyric.config.Config
+import statusbar.lyric.config.XposedOwnSP
 import statusbar.lyric.config.XposedOwnSP.config
 import statusbar.lyric.hook.module.Self
 import statusbar.lyric.hook.module.SystemUILyric
@@ -37,12 +42,36 @@ import statusbar.lyric.tools.LogTools
 import statusbar.lyric.tools.LogTools.log
 import java.util.Locale
 
-class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
-    override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
+class MainHook : XposedModule() {
+
+    companion object {
+        @Volatile
+        var instance: MainHook? = null
+            private set
+    }
+
+    override fun onModuleLoaded(param: ModuleLoadedParam) {
+        instance = this
+        EzXposed.initOnModuleLoaded(this, param)
+        EzXposed.initModuleResources()
+        XposedOwnSP.remotePrefs = runCatching { getRemotePreferences(Config.CONFIG_NAME) }.getOrNull()
+        LogTools.init(config.outLog)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    override fun onPackageLoaded(param: PackageLoadedParam) {
+        EzXposed.initOnPackageLoaded(param)
+    }
+
+    override fun onPackageReady(param: PackageReadyParam) {
+        if (!param.isFirstPackage) return
+        EzXposed.initOnPackageReady(param)
+        if (XposedOwnSP.remotePrefs == null) {
+            XposedOwnSP.remotePrefs = runCatching { getRemotePreferences(Config.CONFIG_NAME) }.getOrNull()
+        }
         LogTools.init(config.outLog)
 
-        EzXHelper.initHandleLoadPackage(lpparam)
-        when (lpparam.packageName) {
+        when (param.packageName) {
             "com.android.systemui" -> {
                 if (!config.masterSwitch) {
                     moduleRes.getString(R.string.master_off).log()
@@ -65,14 +94,6 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             BuildConfig.APPLICATION_ID -> {
                 initHooks(Self())
             }
-        }
-    }
-
-    override fun initZygote(startupParam: IXposedHookZygoteInit.StartupParam) {
-        EzXHelper.initZygote(startupParam)
-        if (!config.masterSwitch) {
-            moduleRes.getString(R.string.master_off).log()
-            return
         }
     }
 

@@ -26,23 +26,26 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.icu.text.SimpleDateFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.util.TypedValue
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import com.github.kyuubiran.ezxhelper.EzXHelper
-import de.robv.android.xposed.XSharedPreferences
-import de.robv.android.xposed.XposedHelpers
+import io.github.kyuubiran.ezxhelper.core.helper.ObjectHelper
+import io.github.kyuubiran.ezxhelper.core.util.ObjectUtil
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed
 import statusbar.lyric.BuildConfig
 import statusbar.lyric.MainActivity
 import statusbar.lyric.R
 import statusbar.lyric.config.XposedOwnSP
-import statusbar.lyric.tools.ActivityTools.isHook
+import statusbar.lyric.hook.MainHook
 import statusbar.lyric.tools.LogTools.log
 import java.io.DataOutputStream
 import java.lang.reflect.Field
@@ -79,6 +82,16 @@ object Tools {
         return formattedBrand
     }
 
+    fun base64ToBitmap(base64: String): Bitmap? {
+        return try {
+            if (base64.isEmpty()) return null
+            val bytes = Base64.decode(base64, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     fun dp2px(context: Context, dpValue: Float): Int =
         TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP,
@@ -88,7 +101,7 @@ object Tools {
 
     internal fun isPresent(name: String): Boolean {
         return try {
-            Objects.requireNonNull(Thread.currentThread().contextClassLoader).loadClass(name)
+            Objects.requireNonNull(Thread.currentThread().contextClassLoader)!!.loadClass(name)
             true
         } catch (_: ClassNotFoundException) {
             false
@@ -125,7 +138,7 @@ object Tools {
         val parentViewId = XposedOwnSP.config.parentViewId
         val textSize = XposedOwnSP.config.textSize
         if (textViewClassName.isEmpty() || parentViewClassName.isEmpty() || textViewId == 0 || parentViewId == 0 || textSize == 0f) {
-            EzXHelper.moduleRes.getString(R.string.load_class_empty).log()
+            EzXposed.moduleRes.getString(R.string.load_class_empty).log()
             return false
         }
         if (this is TextView) {
@@ -168,10 +181,9 @@ object Tools {
 
     fun String.dispose() = this.regexReplace(" ", "").regexReplace("\n", "")
 
-    fun getPref(key: String): XSharedPreferences? {
+    fun getPref(key: String): SharedPreferences? {
         return try {
-            val pref = XSharedPreferences(BuildConfig.APPLICATION_ID, key)
-            if (pref.file.canRead()) pref else null
+            XposedOwnSP.remotePrefs ?: MainHook.instance?.getRemotePreferences(key)
         } catch (e: Throwable) {
             e.log()
             null
@@ -179,11 +191,8 @@ object Tools {
     }
 
     fun getSP(context: Context, key: String): SharedPreferences {
-        @Suppress("DEPRECATION", "WorldReadableFiles")
         return context.createDeviceProtectedStorageContext()
-            .getSharedPreferences(
-                key, if (isHook()) Context.MODE_WORLD_READABLE else Context.MODE_PRIVATE
-            )
+            .getSharedPreferences(key, Context.MODE_PRIVATE)
     }
 
     fun shell(command: String, isSu: Boolean) {
@@ -201,7 +210,7 @@ object Tools {
                 } catch (_: Exception) {
                     // Su shell command failed
                     Handler(Looper.getMainLooper()).post {
-                        Toast.makeText(MainActivity.appContext, "Root permissions required!!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(MainActivity.appContext, "Root permissions required!", Toast.LENGTH_SHORT).show()
                     }
                 }
             } else {
@@ -245,35 +254,32 @@ object Tools {
 
     fun Any?.isNotNull() = this != null
 
-    fun Any.getObjectField(fieldName: String): Any? {
-        return XposedHelpers.getObjectField(this, fieldName)
-    }
+    inline fun <reified T> ObjectHelper.getObjectOrNullAs(fieldName: String): T? =
+        getObjectOrNullUntilSuperclass(fieldName) as? T
 
-    fun Any.getSuperObjectField(fieldName: String): Any? {
-        var clazz: Class<*>? = this.javaClass
-        var field: Field? = null
-
-        do {
+    private fun findFieldUpwards(clazz: Class<*>?, fieldName: String): Field? {
+        var current = clazz
+        while (current != null && current != Any::class.java) {
             try {
-                field = clazz?.getDeclaredField(fieldName)
-                break
-            } catch (_: Throwable) {
+                return current.getDeclaredField(fieldName).apply { isAccessible = true }
+            } catch (_: NoSuchFieldException) {
+                current = current.superclass
             }
-
-            clazz = clazz?.superclass
-            if (clazz == null) break
-        } while (true)
-
-        field.isNotNull {
-            it.isAccessible = true
-            return it.get(this)
         }
         return null
     }
 
+    fun Any.getObjectField(fieldName: String): Any? {
+        return ObjectUtil.getObjectUntilSuperclass(this, fieldName)
+    }
+
+    fun Any.getSuperObjectField(fieldName: String): Any? {
+        return findFieldUpwards(this.javaClass, fieldName)?.get(this)
+    }
+
     fun Any?.existField(fieldName: String): Boolean {
         if (this == null) return false
-        return XposedHelpers.findFieldIfExists(this.javaClass, fieldName).isNotNull()
+        return findFieldUpwards(this.javaClass, fieldName) != null
     }
 
     fun Any?.existMethod(methodName: String): Boolean {
@@ -281,18 +287,14 @@ object Tools {
     }
 
     fun Any.getObjectFieldIfExist(fieldName: String): Any? {
-        return try {
-            XposedHelpers.getObjectField(this, fieldName)
-        } catch (_: Throwable) {
-            null
-        }
+        return ObjectUtil.getObjectOrNullUntilSuperclass(this, fieldName)
     }
 
     fun Any.setObjectField(fieldName: String, value: Any?) {
-        XposedHelpers.setObjectField(this, fieldName, value)
+        ObjectUtil.setObjectUntilSuperclass(this, fieldName, value)
     }
 
     fun Any.callMethod(methodName: String, vararg args: Any): Any? {
-        return XposedHelpers.callMethod(this, methodName, *args)
+        return ObjectUtil.invokeMethodBestMatch(this, methodName, null, *args)
     }
 }

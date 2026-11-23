@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -53,15 +54,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.util.lerp
-import androidx.navigation.NavController
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
+import statusbar.lyric.AppNavigator
+import statusbar.lyric.BlurredTopBar
 import statusbar.lyric.R
 import statusbar.lyric.config.ActivityOwnSP.config
+import statusbar.lyric.rememberBlurBackdrop
 import statusbar.lyric.tools.ActivityTools
 import statusbar.lyric.tools.Tools.isNotNull
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -78,19 +75,20 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
-import top.yukonga.miuix.kmp.extra.SuperArrow
-import top.yukonga.miuix.kmp.extra.SuperDialog
-import top.yukonga.miuix.kmp.extra.SuperDropdown
-import top.yukonga.miuix.kmp.extra.SuperSwitch
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.icons.useful.Back
+import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.getWindowSize
 import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 @Composable
 fun ExtendPage(
-    navController: NavController
+    navigator: AppNavigator
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val viewLocationOptions = listOf(
@@ -124,57 +122,44 @@ fun ExtendPage(
     val showTitleRadiusDialog = remember { mutableStateOf(false) }
     val showTitleStrokeWidthDialog = remember { mutableStateOf(false) }
     val showTitleStrokeColorDialog = remember { mutableStateOf(false) }
-
-    val hazeState = remember { HazeState() }
-    val hazeStyle = HazeStyle(
-        backgroundColor = MiuixTheme.colorScheme.background,
-        tint = HazeTint(
-            MiuixTheme.colorScheme.background.copy(
-                if (scrollBehavior.state.collapsedFraction <= 0f) 1f
-                else lerp(1f, 0.67f, (scrollBehavior.state.collapsedFraction))
-            )
-        )
-    )
+    val backdrop = rememberBlurBackdrop()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                color = Color.Transparent,
-                modifier = Modifier
-                    .hazeEffect(hazeState) {
-                        style = hazeStyle
-                        blurRadius = 25.dp
-                        noiseFactor = 0f
-                    }
-                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
-                    .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
-                title = stringResource(R.string.extend_page),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(
-                        modifier = Modifier.padding(start = 20.dp),
-                        onClick = {
-                            navController.popBackStack()
+            BlurredTopBar(backdrop = backdrop, scrollBehavior = scrollBehavior) {
+                TopAppBar(
+                    color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                        .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
+                    title = stringResource(R.string.extend_page),
+                    scrollBehavior = scrollBehavior,
+                    navigationIcon = {
+                        IconButton(
+                            modifier = Modifier.padding(start = 20.dp),
+                            onClick = {
+                                navigator.popBackStack()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = "Back",
+                                tint = MiuixTheme.colorScheme.onBackground
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Useful.Back,
-                            contentDescription = "Back",
-                            tint = MiuixTheme.colorScheme.onBackground
-                        )
-                    }
-                },
-                defaultWindowInsetsPadding = false
-            )
-        },
-        popupHost = { null }
+                    },
+                    defaultWindowInsetsPadding = false
+                )
+            }
+        }
     ) {
         LazyColumn(
             modifier = Modifier
-                .hazeSource(state = hazeState)
-                .height(getWindowSize().height.dp)
+                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                .fillMaxHeight()
+                .scrollEndHaptic()
                 .overScrollVertical()
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
@@ -197,7 +182,7 @@ fun ExtendPage(
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 12.dp)
                     ) {
-                        SuperDropdown(
+                        OverlayDropdownPreference(
                             title = stringResource(R.string.view_location),
                             items = viewLocationOptions,
                             selectedIndex = viewLocationSelectedOption.intValue,
@@ -206,7 +191,7 @@ fun ExtendPage(
                                 config.viewLocation = newOption
                             },
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.hide_time),
                             checked = hideTime.value,
                             onCheckedChange = {
@@ -214,7 +199,7 @@ fun ExtendPage(
                                 config.hideTime = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.hide_notification_icon),
                             checked = hideNotificationIcon.value,
                             onCheckedChange = {
@@ -222,7 +207,7 @@ fun ExtendPage(
                                 config.hideNotificationIcon = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.hide_lyric_when_lock_screen),
                             checked = hideLyricWhenLockScreen.value,
                             onCheckedChange = {
@@ -230,7 +215,7 @@ fun ExtendPage(
                                 config.hideLyricWhenLockScreen = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.long_click_status_bar_stop),
                             checked = longClickStatusBarStop.value,
                             onCheckedChange = {
@@ -238,7 +223,7 @@ fun ExtendPage(
                                 config.longClickStatusBarStop = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.click_status_bar_to_hide_lyric),
                             checked = clickStatusBarToHideLyric.value,
                             onCheckedChange = {
@@ -246,7 +231,7 @@ fun ExtendPage(
                                 config.clickStatusBarToHideLyric = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.slide_status_bar_cut_songs),
                             checked = slideStatusBarCutSongs.value,
                             onCheckedChange = {
@@ -258,14 +243,14 @@ fun ExtendPage(
                             visible = slideStatusBarCutSongs.value,
                         ) {
                             Column {
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.slide_status_bar_cut_songs_x_radius),
                                     onClick = {
                                         showCutSongsXRadiusDialog.value = true
                                     },
                                     holdDownState = showCutSongsXRadiusDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.slide_status_bar_cut_songs_y_radius),
                                     onClick = {
                                         showCutSongsYRadiusDialog.value = true
@@ -274,7 +259,7 @@ fun ExtendPage(
                                 )
                             }
                         }
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.limit_visibility_change),
                             summary = stringResource(R.string.limit_visibility_change_tips),
                             checked = limitVisibilityChange.value,
@@ -283,7 +268,7 @@ fun ExtendPage(
                                 config.limitVisibilityChange = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.timeout_restore),
                             checked = timeoutRestore.value,
                             onCheckedChange = {
@@ -291,7 +276,7 @@ fun ExtendPage(
                                 config.timeoutRestore = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.dynamic_lyric_speed),
                             checked = dynamicLyricSpeed.value,
                             onCheckedChange = {
@@ -310,7 +295,7 @@ fun ExtendPage(
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 6.dp)
                     ) {
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.title_switch),
                             checked = titleSwitch.value,
                             onCheckedChange = {
@@ -320,7 +305,7 @@ fun ExtendPage(
                         )
                         AnimatedVisibility(titleSwitch.value) {
                             Column {
-                                SuperSwitch(
+                                SwitchPreference(
                                     title = stringResource(R.string.title_show_with_same_lyric),
                                     checked = titleShowWithSameLyric.value,
                                     onCheckedChange = {
@@ -328,42 +313,42 @@ fun ExtendPage(
                                         config.titleShowWithSameLyric = it
                                     }
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.title_delay_duration),
                                     onClick = {
                                         showTitleDelayDialog.value = true
                                     },
                                     holdDownState = showTitleDelayDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.title_color_and_transparency),
                                     onClick = {
                                         showTitleBgColorDialog.value = true
                                     },
                                     holdDownState = showTitleBgColorDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.title_background_radius),
                                     onClick = {
                                         showTitleRadiusDialog.value = true
                                     },
                                     holdDownState = showTitleRadiusDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.title_background_stroke_width),
                                     onClick = {
                                         showTitleStrokeWidthDialog.value = true
                                     },
                                     holdDownState = showTitleStrokeWidthDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.title_background_stroke_color),
                                     onClick = {
                                         showTitleStrokeColorDialog.value = true
                                     },
                                     holdDownState = showTitleStrokeColorDialog.value
                                 )
-                                SuperDropdown(
+                                OverlayDropdownPreference(
                                     title = stringResource(R.string.title_gravity),
                                     items = titleGravityOptions,
                                     selectedIndex = titleGravitySelectedOption.intValue,
@@ -414,10 +399,10 @@ fun ExtendPage(
 @Composable
 fun CutSongsXRadiusDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.slideStatusBarCutSongsXRadius.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.slide_status_bar_cut_songs_x_radius),
         summary = stringResource(R.string.slide_status_bar_cut_songs_x_radius_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -456,10 +441,10 @@ fun CutSongsXRadiusDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun CutSongsYRadiusDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.slideStatusBarCutSongsYRadius.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.slide_status_bar_cut_songs_y_radius),
         summary = stringResource(R.string.slide_status_bar_cut_songs_y_radius_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -498,10 +483,10 @@ fun CutSongsYRadiusDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun TitleDelayDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.titleDelayDuration.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.title_delay_duration),
         summary = stringResource(R.string.title_delay_duration_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -540,10 +525,10 @@ fun TitleDelayDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun TitleBgColorDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.titleColorAndTransparency) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.title_color_and_transparency),
         summary = stringResource(R.string.lyric_color_and_transparency_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -579,10 +564,10 @@ fun TitleBgColorDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun TitleRadiusDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.titleBackgroundRadius.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.title_background_radius),
         summary = stringResource(R.string.lyric_background_radius_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -621,10 +606,10 @@ fun TitleRadiusDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun TitleStrokeWidthDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.titleBackgroundStrokeWidth.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.title_background_stroke_width),
         summary = stringResource(R.string.title_background_stroke_width_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -663,10 +648,10 @@ fun TitleStrokeWidthDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun TitleStrokeColorDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.titleBackgroundStrokeColorAndTransparency) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.title_background_stroke_color),
         summary = stringResource(R.string.lyric_color_and_transparency_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
