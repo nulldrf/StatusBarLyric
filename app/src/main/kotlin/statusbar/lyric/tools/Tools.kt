@@ -40,12 +40,9 @@ import android.widget.TextView
 import android.widget.Toast
 import io.github.kyuubiran.ezxhelper.core.helper.ObjectHelper
 import io.github.kyuubiran.ezxhelper.core.util.ObjectUtil
-import io.github.kyuubiran.ezxhelper.xposed.EzXposed
 import statusbar.lyric.BuildConfig
 import statusbar.lyric.MainActivity
-import statusbar.lyric.R
 import statusbar.lyric.config.XposedOwnSP
-import statusbar.lyric.hook.MainHook
 import statusbar.lyric.tools.LogTools.log
 import java.io.DataOutputStream
 import java.lang.reflect.Field
@@ -138,7 +135,7 @@ object Tools {
         val parentViewId = XposedOwnSP.config.parentViewId
         val textSize = XposedOwnSP.config.textSize
         if (textViewClassName.isEmpty() || parentViewClassName.isEmpty() || textViewId == 0 || parentViewId == 0 || textSize == 0f) {
-            EzXposed.moduleRes.getString(R.string.load_class_empty).log()
+            (XposedOwnSP.emptyClassWarningProvider?.invoke() ?: "Anchor class is empty").log()
             return false
         }
         if (this is TextView) {
@@ -183,7 +180,9 @@ object Tools {
 
     fun getPref(key: String): SharedPreferences? {
         return try {
-            XposedOwnSP.remotePrefs ?: MainHook.instance?.getRemotePreferences(key)
+            XposedOwnSP.remotePrefs ?: XposedOwnSP.remotePrefsProvider?.invoke(key)?.also {
+                XposedOwnSP.remotePrefs = it
+            }
         } catch (e: Throwable) {
             e.log()
             null

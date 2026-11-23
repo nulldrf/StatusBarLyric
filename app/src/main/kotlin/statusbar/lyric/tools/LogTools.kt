@@ -23,13 +23,15 @@
 package statusbar.lyric.tools
 
 import android.util.Log
-import statusbar.lyric.hook.MainHook
 
 object LogTools {
     private const val MAX_LENGTH = 4000
-    private const val TAG = "StatusBarLyric"
+    const val TAG = "StatusBarLyric"
     private const val XP_TAG = "LSPosed-Bridge"
     private var outprint = false
+
+    @Volatile
+    var xposedLogger: ((String, Throwable?) -> Unit)? = null
 
     fun Any?.log(): Any? {
         if (!outprint) return this
@@ -53,13 +55,9 @@ object LogTools {
 
     private fun emitLog(message: String, throwable: Throwable?) {
         Log.d(TAG, message)
-        val module = MainHook.instance
-        if (module != null) {
-            if (throwable != null) {
-                module.log(Log.INFO, TAG, message, throwable)
-            } else {
-                module.log(Log.INFO, TAG, message)
-            }
+        val logger = xposedLogger
+        if (logger != null) {
+            runCatching { logger(message, throwable) }
         } else {
             Log.d(XP_TAG, "$TAG:$message")
         }

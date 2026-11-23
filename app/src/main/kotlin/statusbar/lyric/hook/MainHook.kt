@@ -47,14 +47,24 @@ import java.util.Locale
 
 class MainHook : XposedModule() {
 
-    companion object {
-        @Volatile
-        var instance: MainHook? = null
-            private set
+    private fun registerProviders() {
+        LogTools.xposedLogger = { message, throwable ->
+            if (throwable != null) {
+                log(android.util.Log.INFO, LogTools.TAG, message, throwable)
+            } else {
+                log(android.util.Log.INFO, LogTools.TAG, message)
+            }
+        }
+        XposedOwnSP.remotePrefsProvider = { group ->
+            runCatching { getRemotePreferences(group) }.getOrNull()
+        }
+        XposedOwnSP.emptyClassWarningProvider = {
+            safeString(R.string.load_class_empty, "Anchor class is empty")
+        }
     }
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
-        instance = this
+        registerProviders()
         runCatching {
             EzXposed.initOnModuleLoaded(this, param)
         }
@@ -73,6 +83,7 @@ class MainHook : XposedModule() {
 
     override fun onPackageReady(param: PackageReadyParam) {
         if (!param.isFirstPackage) return
+        registerProviders()
         runCatching {
             EzXposed.initOnPackageReady(param)
         }

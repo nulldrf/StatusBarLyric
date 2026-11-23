@@ -31,6 +31,14 @@ object XposedOwnSP {
     var remotePrefs: SharedPreferences? = null
         internal set
 
+    @Volatile
+    var remotePrefsProvider: ((String) -> SharedPreferences?)? = null
+        internal set
+
+    @Volatile
+    var emptyClassWarningProvider: (() -> String)? = null
+        internal set
+
     val config: Config by lazy {
         Config(remotePrefs ?: Tools.getPref(CONFIG_NAME), readOnly = true)
     }
