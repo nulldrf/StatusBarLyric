@@ -24,12 +24,14 @@ package statusbar.lyric.hook.module
 
 import android.annotation.SuppressLint
 import android.app.Application
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.os.PowerManager
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Point
@@ -102,6 +104,7 @@ import statusbar.lyric.tools.XiaomiUtils.isHyperOS
 import statusbar.lyric.view.LyricSwitchView
 import statusbar.lyric.view.TitleDialog
 import java.io.File
+import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -255,8 +258,10 @@ class SystemUILyric : BaseHook() {
                 .createHook {
                     after { hookParam ->
                         val view = (hookParam.thisObject as View)
-                        if (view.isTargetView()) {
+                        if (isReady && view === clockView) {
                             "Running onDetachedFromWindow".log()
+                            statusbar.lyric.tools.Tools.resetTargetViewIndex()
+                            statusBatteryContainer = null
                             canLoad = true
                             updateLyricState(showLyric = false, showFocus = false)
                         }
@@ -267,6 +272,10 @@ class SystemUILyric : BaseHook() {
                 .createHook {
                     before { param ->
                         val view = param.thisObject as View
+                        val existing = statusBatteryContainer
+                        if (existing != null && !existing.isAttachedToWindow) {
+                            statusBatteryContainer = null
+                        }
                         if (statusBatteryContainer.isNotNull()) {
                             if (statusBatteryContainer != view) return@before
                             if (!isMusicPlaying) return@before
@@ -277,7 +286,7 @@ class SystemUILyric : BaseHook() {
                             } else {
                                 updateLyricState(showLyric = false)
                             }
-                        } else {
+                        } else if (view.id != View.NO_ID && (!isReady || view.rootView === clockView.rootView)) {
                             val idName =
                                 runCatching { view.resources.getResourceEntryName(view.id) }.getOrNull()
                             if (idName.isNotNull() && idName == "system_icons") {
@@ -565,22 +574,33 @@ class SystemUILyric : BaseHook() {
     }
 
     private fun isInFullScreenMode(): Boolean {
-        var isInFullScreenMode = false
+        return runCatching {
+            var inFullScreen = false
 
-        if (centralSurfacesImpl.existField("mIsFullscreen")) {
-            isInFullScreenMode = centralSurfacesImpl?.getObjectField("mIsFullscreen") as Boolean
-            statusBarShowing = centralSurfacesImpl?.getObjectField("mTransientShown") as Boolean
-        } else if (defaultDisplay.existField("isInFullscreenMode")) {
-            val isInFullscreenMode = defaultDisplay?.getObjectField("isInFullscreenMode")
-            isInFullScreenMode = isInFullscreenMode?.getObjectField("$\$delegate_0")
-                ?.callMethod("getValue") as Boolean
+            if (centralSurfacesImpl.existField("mIsFullscreen")) {
+                inFullScreen = centralSurfacesImpl?.getObjectField("mIsFullscreen") as? Boolean ?: false
+                statusBarShowing = centralSurfacesImpl?.getObjectField("mTransientShown") as? Boolean ?: true
+            } else if (defaultDisplay.existField("isInFullscreenMode")) {
+                val isInFullscreenMode = defaultDisplay?.getObjectField("isInFullscreenMode")
+                inFullScreen = isInFullscreenMode?.getObjectField("$\$delegate_0")
+                    ?.callMethod("getValue") as? Boolean ?: false
 
-            val isTransientShown = defaultDisplay?.getObjectField("isTransientShown")
-            statusBarShowing =
-                isTransientShown?.getObjectField("$\$delegate_0")?.callMethod("getValue") as Boolean
-        }
+                val isTransientShown = defaultDisplay?.getObjectField("isTransientShown")
+                statusBarShowing =
+                    isTransientShown?.getObjectField("$\$delegate_0")?.callMethod("getValue") as? Boolean ?: true
+            }
 
-        return isInFullScreenMode
+            inFullScreen
+        }.getOrDefault(false)
+    }
+
+    private fun isActuallyScreenLocked(): Boolean {
+        if (!config.hideLyricWhenLockScreen) return false
+        return runCatching {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            (pm != null && !pm.isInteractive) || (km != null && km.isKeyguardLocked)
+        }.getOrDefault(isScreenLocked)
     }
 
     private fun autoHideStatusBarInFullScreenModeIfNeed() {
@@ -590,6 +610,9 @@ class SystemUILyric : BaseHook() {
         autoHideController!!.callMethod("touchAutoHide")
     }
 
+    private val superLyricExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "StatusBarLyric-SuperLyric").apply { isDaemon = true }
+    }
     private var lastArtist: String = ""
     private var lastAlbum: String = ""
     private var playingApp: String = ""
@@ -604,10 +627,43 @@ class SystemUILyric : BaseHook() {
     private val handler: Handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
             if (msg.what == timeoutRestore && config.timeoutRestore) {
-                lastLyric = ""
-                playingApp = ""
-                updateLyricState(showLyric = false)
-                "Timeout restore".log()
+                if (SuperLyric.isAvailable()) {
+                    // SuperLyric 4.x only pushes frames on line change; verify latest state off-main-thread
+                    // before hiding so long lyric lines, instrumental gaps, or silent listener eviction recover cleanly.
+                    superLyricExecutor.execute {
+                        val latest = runCatching { SuperLyric.receiver().latest() }.getOrNull()
+                        post {
+                            if (latest != null &&
+                                latest.state != com.hchen.superlyricapi.model.PlaybackState.PAUSED &&
+                                latest.state != com.hchen.superlyricapi.model.PlaybackState.STOPPED
+                            ) {
+                                val doc = latest.lyric
+                                val line = latest.line ?: doc.lines.firstOrNull()
+                                val latestText = line?.text.orEmpty().ifEmpty { doc.title }
+                                if (latestText.isNotEmpty() && (latestText != lastLyric || isHiding)) {
+                                    "SuperLyric state diverged on timeout check; force re-registering".log()
+                                    ensureSuperLyricRegistered(pullLatest = false, retriesLeft = 3, forceRebind = true)
+                                    applySuperLyricView(latest)
+                                } else {
+                                    removeMessages(timeoutRestore)
+                                    sendEmptyMessageDelayed(timeoutRestore, 15000L)
+                                }
+                            } else {
+                                lastLyric = ""
+                                playingApp = ""
+                                isMusicPlaying = false
+                                updateLyricState(showLyric = false)
+                                "Timeout restore".log()
+                            }
+                        }
+                    }
+                } else {
+                    lastLyric = ""
+                    playingApp = ""
+                    isMusicPlaying = false
+                    updateLyricState(showLyric = false)
+                    "Timeout restore".log()
+                }
             }
         }
     }
@@ -672,42 +728,48 @@ class SystemUILyric : BaseHook() {
 
         changeIcon(playingApp, base64Icon)
         updateLyricState(delay = delay)
-        val timeoutMs = maxOf(10000L, delay.toLong() + 3000L)
+        val timeoutMs = maxOf(15000L, delay.toLong() + 5000L)
         if (handler.hasMessages(timeoutRestore)) {
             handler.removeMessages(timeoutRestore)
         }
         handler.sendEmptyMessageDelayed(timeoutRestore, timeoutMs)
     }
 
+    private fun applySuperLyricView(view: LyricView) {
+        val state = view.state
+        if (state == com.hchen.superlyricapi.model.PlaybackState.BUFFERING) return
+        if (state == com.hchen.superlyricapi.model.PlaybackState.PAUSED ||
+            state == com.hchen.superlyricapi.model.PlaybackState.STOPPED
+        ) {
+            handleStopEvent(view.publisher.orEmpty())
+            return
+        }
+        val doc = view.lyric
+        val line = view.line ?: doc.lines.firstOrNull()
+        val lyricText = line?.text.orEmpty().ifEmpty { doc.title }
+        val delayMs = if (line != null && line.end > line.start) (line.end - line.start).toInt() else 0
+        val hasMeta = doc.title.isNotEmpty() || doc.artist.isNotEmpty() || doc.album.isNotEmpty()
+        handleLyricEvent(
+            packageName = view.publisher.orEmpty(),
+            lyric = lyricText,
+            delay = delayMs,
+            hasMetadata = hasMeta,
+            title = doc.title,
+            artist = doc.artist,
+            album = doc.album,
+            base64Icon = ""
+        )
+    }
+
     private val superLyricV4Listener = object : LyricListener {
         override fun onLyric(view: LyricView) {
-            val state = view.state
-            if (state == com.hchen.superlyricapi.model.PlaybackState.BUFFERING) return
-            if (state == com.hchen.superlyricapi.model.PlaybackState.PAUSED ||
-                state == com.hchen.superlyricapi.model.PlaybackState.STOPPED
-            ) {
-                handleStopEvent(view.publisher.orEmpty())
-                return
-            }
-            val doc = view.lyric
-            val line = view.line ?: doc.lines.firstOrNull()
-            val lyricText = line?.text.orEmpty().ifEmpty { doc.title }
-            val delayMs = if (line != null && line.end > line.start) (line.end - line.start).toInt() else 0
-            val hasMeta = doc.title.isNotEmpty() || doc.artist.isNotEmpty() || doc.album.isNotEmpty()
-            handleLyricEvent(
-                packageName = view.publisher.orEmpty(),
-                lyric = lyricText,
-                delay = delayMs,
-                hasMetadata = hasMeta,
-                title = doc.title,
-                artist = doc.artist,
-                album = doc.album,
-                base64Icon = ""
-            )
+            // Return from Binder thread immediately so SuperLyric's 500ms SubscriberBudget never evicts us.
+            handler.post { applySuperLyricView(view) }
         }
 
         override fun onStop(stop: Stop) {
-            handleStopEvent(stop.publisher.orEmpty())
+            val publisher = stop.publisher.orEmpty()
+            handler.post { handleStopEvent(publisher) }
         }
     }
 
@@ -737,7 +799,7 @@ class SystemUILyric : BaseHook() {
                         @Suppress("DEPRECATION")
                         val playbackState = data.readParcelable<PlaybackState>(PlaybackState::class.java.classLoader)
                         if (playbackState?.state != PlaybackState.STATE_BUFFERING) {
-                            handleStopEvent(pkg)
+                            handler.post { handleStopEvent(pkg) }
                         }
                     }
                     reply?.writeNoException()
@@ -755,16 +817,19 @@ class SystemUILyric : BaseHook() {
                         val titleText = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty()
                         val artistText = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty()
                         val albumText = metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty()
-                        handleLyricEvent(
-                            packageName = pkg,
-                            lyric = lyricText,
-                            delay = delayMs,
-                            hasMetadata = metadata != null,
-                            title = titleText,
-                            artist = artistText,
-                            album = albumText,
-                            base64Icon = icon
-                        )
+                        val hasMeta = metadata != null
+                        handler.post {
+                            handleLyricEvent(
+                                packageName = pkg,
+                                lyric = lyricText,
+                                delay = delayMs,
+                                hasMetadata = hasMeta,
+                                title = titleText,
+                                artist = artistText,
+                                album = albumText,
+                                base64Icon = icon
+                            )
+                        }
                     }
                     reply?.writeNoException()
                     true
@@ -774,27 +839,39 @@ class SystemUILyric : BaseHook() {
         }
     }
 
-    private fun ensureSuperLyricRegistered(pullLatest: Boolean = false, retriesLeft: Int = 15) {
-        runCatching {
-            val result = SuperLyric.receiver().register(superLyricV4Listener)
-            statusbar.lyric.hook.MainHook.logAlways(
-                "SuperLyric v4 receiver register result=$result, available=${SuperLyric.isAvailable()}, serverApi=${SuperLyric.serverApiVersion()}"
-            )
-            if (result == com.hchen.superlyricapi.Receiver.RegisterResult.OK) {
-                if (pullLatest) {
-                    SuperLyric.receiver().latest()?.let { superLyricV4Listener.onLyric(it) }
+    private fun ensureSuperLyricRegistered(
+        pullLatest: Boolean = false,
+        retriesLeft: Int = 15,
+        forceRebind: Boolean = false
+    ) {
+        superLyricExecutor.execute {
+            runCatching {
+                val receiver = SuperLyric.receiver()
+                if (forceRebind) {
+                    runCatching { receiver.unregister(superLyricV4Listener) }
                 }
-            } else if (retriesLeft > 0) {
-                handler.postDelayed({
-                    ensureSuperLyricRegistered(pullLatest = true, retriesLeft = retriesLeft - 1)
-                }, 2000L)
-            }
-        }.onFailure {
-            statusbar.lyric.hook.MainHook.logAlways("SuperLyric v4 receiver register failed", it)
-            if (retriesLeft > 0) {
-                handler.postDelayed({
-                    ensureSuperLyricRegistered(pullLatest = true, retriesLeft = retriesLeft - 1)
-                }, 2000L)
+                val result = receiver.register(superLyricV4Listener)
+                statusbar.lyric.hook.MainHook.logAlways(
+                    "SuperLyric v4 receiver register result=$result, forceRebind=$forceRebind, available=${SuperLyric.isAvailable()}, serverApi=${SuperLyric.serverApiVersion()}"
+                )
+                if (result == com.hchen.superlyricapi.Receiver.RegisterResult.OK) {
+                    if (pullLatest) {
+                        receiver.latest()?.let { latestView ->
+                            handler.post { applySuperLyricView(latestView) }
+                        }
+                    }
+                } else if (retriesLeft > 0) {
+                    handler.postDelayed({
+                        ensureSuperLyricRegistered(pullLatest = true, retriesLeft = retriesLeft - 1)
+                    }, 2000L)
+                }
+            }.onFailure {
+                statusbar.lyric.hook.MainHook.logAlways("SuperLyric v4 receiver register failed", it)
+                if (retriesLeft > 0) {
+                    handler.postDelayed({
+                        ensureSuperLyricRegistered(pullLatest = true, retriesLeft = retriesLeft - 1)
+                    }, 2000L)
+                }
             }
         }
     }
@@ -827,20 +904,19 @@ class SystemUILyric : BaseHook() {
             context.registerReceiver(updateConfig, IntentFilter("updateConfig"))
         }
 
-        if (config.hideLyricWhenLockScreen) {
-            val screenLockFilter = IntentFilter().apply {
-                addAction(Intent.ACTION_SCREEN_OFF)
-                addAction(Intent.ACTION_USER_PRESENT)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(
-                    screenLockReceiver,
-                    screenLockFilter,
-                    Context.RECEIVER_EXPORTED
-                )
-            } else {
-                context.registerReceiver(screenLockReceiver, screenLockFilter)
-            }
+        val screenLockFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(
+                screenLockReceiver,
+                screenLockFilter,
+                Context.RECEIVER_EXPORTED
+            )
+        } else {
+            context.registerReceiver(screenLockReceiver, screenLockFilter)
         }
 
         "Register SuperLyric".log()
@@ -848,10 +924,19 @@ class SystemUILyric : BaseHook() {
 
     // 适用于直接显示歌词，不需要考虑其他类似焦点通知的状态
     private fun showLyric(lyric: String, delay: Int = 0) {
+        isScreenLocked = isActuallyScreenLocked()
         if (!isReady || !isMusicPlaying || lyric.isEmpty() || isScreenLocked) return
 
         "Showing LyricView".log()
         goMainThread {
+            if (lyricLayout.parent !== targetView) {
+                runCatching { (lyricLayout.parent as? ViewGroup)?.removeView(lyricLayout) }
+                if (config.viewLocation == 0) {
+                    targetView.addView(lyricLayout, 0)
+                } else {
+                    targetView.addView(lyricLayout)
+                }
+            }
             isHiding = false
             lastColor = clockView.currentTextColor
             lyricLayout.cancelAnimation()
@@ -869,7 +954,7 @@ class SystemUILyric : BaseHook() {
                 width = lyricWidth
                 val i = theoreticalWidth - lyricWidth
                 "Lyric width: $lyricWidth, Theoretical width: $theoreticalWidth, i: $i".log()
-                if (i > 0) {
+                if (i > 0 && lyricWidth > 0) {
                     if (delay > 0) {
                         val durationInSeconds = delay / 1000f
                         if (durationInSeconds > 0) {
@@ -879,7 +964,7 @@ class SystemUILyric : BaseHook() {
                             "Delay mode - Duration: ${durationInSeconds}, Speed: $boundedSpeed".log()
                         }
                     } else if (config.dynamicLyricSpeed) {
-                        val proportion = i / lyricWidth
+                        val proportion = i.toFloat() / lyricWidth
                         val speed = 10 * proportion + 0.7f
                         setScrollSpeed(speed)
                         "Dynamic mode - Proportion: $proportion, Speed: $speed".log()
@@ -1055,12 +1140,13 @@ class SystemUILyric : BaseHook() {
         val textWidth = textView.paint.measureText(lyric).toInt()
         theoreticalWidth = textWidth
         return if (config.lyricWidth == 0) {
-            min(textView.paint.measureText(lyric).toInt(), targetView.width - config.lyricStartMargins - config.lyricEndMargins)
+            val availableWidth = targetView.width - config.lyricStartMargins - config.lyricEndMargins
+            if (availableWidth > 0) min(textWidth, availableWidth) else textWidth
         } else {
             if (config.fixedLyricWidth) {
                 scaleWidth()
             } else {
-                min(textView.paint.measureText(lyric).toInt(), scaleWidth())
+                min(textWidth, scaleWidth())
             }
         }
     }
@@ -1086,13 +1172,28 @@ class SystemUILyric : BaseHook() {
 
     inner class ScreenLockReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            isScreenLocked = intent.action == Intent.ACTION_SCREEN_OFF
-            "isScreenLocked: $isScreenLocked".log()
-            if (isScreenLocked) {
-                updateLyricState(showLyric = false)
-            } else {
-                if (isMusicPlaying && lastLyric.isNotEmpty()) {
-                    updateLyricState()
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    isScreenLocked = true
+                    "isScreenLocked: true (ACTION_SCREEN_OFF)".log()
+                    if (config.hideLyricWhenLockScreen) {
+                        updateLyricState(showLyric = false)
+                    }
+                }
+
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                    isScreenLocked = isActuallyScreenLocked()
+                    "isScreenLocked: $isScreenLocked (${intent.action})".log()
+                    if (!isScreenLocked) {
+                        ensureSuperLyricRegistered(
+                            pullLatest = true,
+                            retriesLeft = 3,
+                            forceRebind = intent.action == Intent.ACTION_USER_PRESENT
+                        )
+                        if (isMusicPlaying && lastLyric.isNotEmpty()) {
+                            updateLyricState()
+                        }
+                    }
                 }
             }
         }

@@ -132,12 +132,11 @@ object LyricViewTools {
         }
     }
 
-    private var alphaAnimation: AnimationSet? = null
-
     fun View.hideView(anim: Boolean = true) {
         if (isGone) return
+        cancelAnimation()
         if (anim) {
-            alphaAnimation = getAlphaAnimation(false, 0).apply {
+            val animSet = getAlphaAnimation(false, 150).apply {
                 setAnimationListener(object : Animation.AnimationListener {
                     override fun onAnimationStart(animation: Animation) {}
                     override fun onAnimationEnd(animation: Animation) {
@@ -147,29 +146,21 @@ object LyricViewTools {
                     override fun onAnimationRepeat(animation: Animation) {}
                 })
             }
-            startAnimation(alphaAnimation)
+            startAnimation(animSet)
         } else {
             visibility = View.GONE
         }
     }
 
     fun View.cancelAnimation() {
-        if (alphaAnimation.isNotNull())
-            alphaAnimation!!.cancel()
+        animation?.setAnimationListener(null)
+        clearAnimation()
     }
 
     fun View.showView() {
+        cancelAnimation()
         if (isVisible) return
-        val alphaAnimation = getAlphaAnimation(true).apply {
-            setAnimationListener(object : Animation.AnimationListener {
-                override fun onAnimationStart(animation: Animation) {}
-                override fun onAnimationEnd(animation: Animation) {
-                    visibility = View.VISIBLE
-                }
-
-                override fun onAnimationRepeat(animation: Animation) {}
-            })
-        }
-        startAnimation(alphaAnimation)
+        visibility = View.VISIBLE
+        startAnimation(getAlphaAnimation(true, 150))
     }
 }

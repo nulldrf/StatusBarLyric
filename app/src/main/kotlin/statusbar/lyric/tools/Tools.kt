@@ -128,6 +128,10 @@ object Tools {
         }
     }
 
+    fun resetTargetViewIndex() {
+        index = 0
+    }
+
     fun View.isTargetView(): Boolean {
         val textViewClassName = XposedOwnSP.config.textViewClassName
         val textViewId = XposedOwnSP.config.textViewId
