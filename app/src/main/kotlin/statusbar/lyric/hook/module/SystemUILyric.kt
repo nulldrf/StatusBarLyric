@@ -39,6 +39,7 @@ import android.graphics.PorterDuff
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.PlaybackState
 import android.os.Binder
@@ -316,14 +317,14 @@ class SystemUILyric : BaseHook() {
         }
 
         if (config.limitVisibilityChange) {
-            moduleRes.getString(R.string.limit_visibility_change).log()
+            runCatching { moduleRes.getString(R.string.limit_visibility_change).log() }
             View::class.java.methodFinder().filterByName("setVisibility").single().createHook {
                 before { hookParam ->
-                    if (isMusicPlaying && !isHiding) {
+                    if (isReady && isMusicPlaying && !isHiding && !isScreenLocked && lyricLayout.visibility == View.VISIBLE) {
                         if (hookParam.args[0] == View.VISIBLE) {
                             val view = hookParam.thisObject as View
                             if (
-                                (isReady && clockView == view && config.hideTime) ||
+                                (clockView == view && config.hideTime) ||
                                 (notificationIconArea == view && config.hideNotificationIcon) ||
                                 (XiaomiHooks.getCarrierLabel() == view && config.hideCarrier) ||
                                 (XiaomiHooks.getMiuiNetworkSpeedView() == view && config.mMiuiHideNetworkSpeed) ||
@@ -581,7 +582,7 @@ class SystemUILyric : BaseHook() {
                 FocusNotifyController.hideFocusNotifyIfNeed()
                 "StatusBar state is showing".log()
             } else {
-                hideLyric()
+                hideLyric(force = !isMusicPlaying)
                 if (showFocus)
                     FocusNotifyController.showFocusNotifyIfNeed()
                 if (!statusBarShowing) "StatusBar state is hiding".log()
@@ -591,7 +592,7 @@ class SystemUILyric : BaseHook() {
                 showLyric(lastLyric, delay)
                 FocusNotifyController.hideFocusNotifyIfNeed()
             } else {
-                hideLyric()
+                hideLyric(force = !isMusicPlaying)
                 if (showFocus)
                     FocusNotifyController.showFocusNotifyIfNeed()
             }
@@ -623,13 +624,34 @@ class SystemUILyric : BaseHook() {
         }.getOrDefault(false)
     }
 
+    @Volatile
+    private var lastUserPresentWallMs: Long = 0L
+
+    @Volatile
+    private var lastLyricReceivedWallMs: Long = 0L
+
+    private var inactiveAudioChecks: Int = 0
+
     private fun isActuallyScreenLocked(): Boolean {
         if (!config.hideLyricWhenLockScreen) return false
         return runCatching {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (pm != null && !pm.isInteractive) return true
+            // Right after ACTION_USER_PRESENT fires, Samsung One UI's KeyguardManager can briefly
+            // report isKeyguardLocked == true while the dismiss animation runs.
+            if (lastUserPresentWallMs > 0L && (SystemClock.elapsedRealtime() - lastUserPresentWallMs) < 800L) {
+                return false
+            }
             val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-            (pm != null && !pm.isInteractive) || (km != null && km.isKeyguardLocked)
+            km != null && km.isKeyguardLocked
         }.getOrDefault(isScreenLocked)
+    }
+
+    private fun isSystemAudioPlaying(): Boolean {
+        return runCatching {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            am?.isMusicActive ?: true
+        }.getOrDefault(true)
     }
 
     private fun autoHideStatusBarInFullScreenModeIfNeed() {
@@ -653,45 +675,78 @@ class SystemUILyric : BaseHook() {
         }
     }
     private val timeoutRestore: Int = 0
+    private val audioWatchdog: Int = 1
     private val handler: Handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
-            if (msg.what == timeoutRestore && config.timeoutRestore) {
-                if (SuperLyric.isAvailable()) {
-                    // SuperLyric 4.x only pushes frames on line change; verify latest state off-main-thread
-                    // before hiding so long lyric lines, instrumental gaps, or silent listener eviction recover cleanly.
-                    superLyricExecutor.execute {
-                        val latest = runCatching { SuperLyric.receiver().latest() }.getOrNull()
-                        post {
-                            if (latest != null &&
-                                latest.state != com.hchen.superlyricapi.model.PlaybackState.PAUSED &&
-                                latest.state != com.hchen.superlyricapi.model.PlaybackState.STOPPED
-                            ) {
-                                val doc = latest.lyric
-                                val line = latest.line ?: doc.lines.firstOrNull()
-                                val latestText = line?.text.orEmpty().ifEmpty { doc.title }
-                                if (latestText.isNotEmpty() && (latestText != lastLyric || isHiding)) {
-                                    "SuperLyric state diverged on timeout check; force re-registering".log()
-                                    ensureSuperLyricRegistered(pullLatest = false, retriesLeft = 3, forceRebind = true)
-                                    applySuperLyricView(latest)
-                                } else {
-                                    removeMessages(timeoutRestore)
-                                    sendEmptyMessageDelayed(timeoutRestore, 15000L)
-                                }
-                            } else {
-                                lastLyric = ""
-                                playingApp = ""
-                                isMusicPlaying = false
-                                updateLyricState(showLyric = false)
-                                "Timeout restore".log()
-                            }
+            when (msg.what) {
+                audioWatchdog -> {
+                    if (!isMusicPlaying) return
+                    if (isSystemAudioPlaying()) {
+                        inactiveAudioChecks = 0
+                        sendEmptyMessageDelayed(audioWatchdog, 3500L)
+                    } else {
+                        inactiveAudioChecks++
+                        val silentMs = SystemClock.elapsedRealtime() - lastLyricReceivedWallMs
+                        if (inactiveAudioChecks >= 2 && silentMs >= 5000L) {
+                            "Audio inactive for ${silentMs}ms; forcing status bar restore".log()
+                            handleStopEvent("")
+                        } else {
+                            sendEmptyMessageDelayed(audioWatchdog, 2500L)
                         }
                     }
-                } else {
-                    lastLyric = ""
-                    playingApp = ""
-                    isMusicPlaying = false
-                    updateLyricState(showLyric = false)
-                    "Timeout restore".log()
+                }
+
+                timeoutRestore -> {
+                    if (!config.timeoutRestore || !isMusicPlaying) return
+                    // If the music app was force-closed or stopped abruptly without sending onStop,
+                    // AudioManager.isMusicActive will already be false even if SuperLyric holds a stale frame.
+                    if (!isSystemAudioPlaying()) {
+                        "Timeout restore: system audio inactive".log()
+                        handleStopEvent("")
+                        return
+                    }
+                    if (SuperLyric.isAvailable()) {
+                        superLyricExecutor.execute {
+                            val latest = runCatching { SuperLyric.receiver().latest() }.getOrNull()
+                            post {
+                                if (!isMusicPlaying) return@post
+                                if (latest != null &&
+                                    latest.state != com.hchen.superlyricapi.model.PlaybackState.PAUSED &&
+                                    latest.state != com.hchen.superlyricapi.model.PlaybackState.STOPPED &&
+                                    isSystemAudioPlaying()
+                                ) {
+                                    // Never unbind/rebind while screen is locked (hiding is expected on lockscreen
+                                    // and unbinding clears SuperLyricApi's LyricCache!).
+                                    if (isActuallyScreenLocked()) {
+                                        removeMessages(timeoutRestore)
+                                        sendEmptyMessageDelayed(timeoutRestore, 15000L)
+                                        return@post
+                                    }
+                                    val doc = latest.lyric
+                                    val line = latest.line ?: doc.lines.firstOrNull()
+                                    val latestText = line?.text.orEmpty().ifEmpty { doc.title }
+                                    val diverged = latestText.isNotEmpty() && latestText != lastLyric
+                                    val hiddenUnexpectedly = isHiding || (isReady && lyricLayout.visibility != View.VISIBLE)
+                                    if (diverged || hiddenUnexpectedly) {
+                                        "SuperLyric state check on unlocked screen (diverged=$diverged, hidden=$hiddenUnexpectedly)".log()
+                                        if (diverged) {
+                                            ensureSuperLyricRegistered(pullLatest = true, retriesLeft = 3, forceRebind = true)
+                                        }
+                                        applySuperLyricView(latest)
+                                    } else {
+                                        removeMessages(timeoutRestore)
+                                        sendEmptyMessageDelayed(timeoutRestore, 15000L)
+                                    }
+                                } else {
+                                    "Timeout restore".log()
+                                    handleStopEvent("")
+                                }
+                            }
+                        }
+                    } else {
+                        "Timeout restore".log()
+                        handleStopEvent("")
+                    }
                 }
             }
         }
@@ -728,11 +783,13 @@ class SystemUILyric : BaseHook() {
         lastLyric = ""
         playingApp = ""
         isMusicPlaying = false
+        inactiveAudioChecks = 0
         tempoTracker.reset()
         lastTimingContext = LyricTimingContext()
         if (lastRunnable.isNotNull()) handler.removeCallbacks(lastRunnable!!)
         lastRunnable = null
-        if (handler.hasMessages(timeoutRestore)) handler.removeMessages(timeoutRestore)
+        handler.removeMessages(timeoutRestore)
+        handler.removeMessages(audioWatchdog)
         if (!isReady) return
         updateLyricState(showLyric = false)
     }
@@ -766,13 +823,16 @@ class SystemUILyric : BaseHook() {
             }
         }
         if (lyric.isEmpty()) return
+        val nowWall = SystemClock.elapsedRealtime()
         isMusicPlaying = true
         lastLyric = lyric
+        lastLyricReceivedWallMs = nowWall
+        inactiveAudioChecks = 0
         val songKey = "${playingApp}|${title}|${artist}"
         lastTimingContext = timing ?: LyricTimingContext(
             songKey = songKey,
             legacyDelayMs = delay,
-            receivedWallMs = SystemClock.elapsedRealtime()
+            receivedWallMs = nowWall
         )
         if (!isReady) return
 
@@ -784,10 +844,10 @@ class SystemUILyric : BaseHook() {
         changeIcon(playingApp, base64Icon)
         updateLyricState(delay = delay)
         val timeoutMs = maxOf(15000L, delay.toLong() + 5000L)
-        if (handler.hasMessages(timeoutRestore)) {
-            handler.removeMessages(timeoutRestore)
-        }
+        handler.removeMessages(timeoutRestore)
         handler.sendEmptyMessageDelayed(timeoutRestore, timeoutMs)
+        handler.removeMessages(audioWatchdog)
+        handler.sendEmptyMessageDelayed(audioWatchdog, 3500L)
     }
 
     private fun applySuperLyricView(view: LyricView) {
@@ -812,12 +872,15 @@ class SystemUILyric : BaseHook() {
         val songKey = "$publisher|${doc.id.ifEmpty { "${doc.title}|${doc.artist}" }}"
 
         // Mid-line playback speed or position sync for the exact same displayed line:
-        // smoothly adjust scrolling without re-triggering the TextSwitcher animation.
+        // only short-circuit when lyricLayout is actually visible and attached to targetView.
         val isSameLineSync = isReady && !isHiding && isMusicPlaying &&
+            lyricLayout.visibility == View.VISIBLE && lyricLayout.parent === targetView &&
             lyricText.isNotEmpty() && lyricText == lastLyric &&
             lineStart > 0L && lineStart == lastTimingContext.lineStartMs &&
             view.index == lastTimingContext.lineIndex
         if (isSameLineSync) {
+            lastLyricReceivedWallMs = SystemClock.elapsedRealtime()
+            inactiveAudioChecks = 0
             lastTimingContext = lastTimingContext.copy(
                 playbackSpeed = view.speed,
                 positionMs = view.position
@@ -828,9 +891,7 @@ class SystemUILyric : BaseHook() {
                 }
             }
             val timeoutMs = maxOf(15000L, delayMs.toLong() + 5000L)
-            if (handler.hasMessages(timeoutRestore)) {
-                handler.removeMessages(timeoutRestore)
-            }
+            handler.removeMessages(timeoutRestore)
             handler.sendEmptyMessageDelayed(timeoutRestore, timeoutMs)
             return
         }
@@ -1111,12 +1172,15 @@ class SystemUILyric : BaseHook() {
     }
 
     // 适用于不考虑状态的隐藏
-    private fun hideLyric() {
+    private fun hideLyric(force: Boolean = false) {
         if (!isReady) return
-        if (isHiding) return
+        val needsRestore = lyricLayout.visibility != View.GONE ||
+            (config.hideTime && clockView.visibility != View.VISIBLE) ||
+            (config.hideNotificationIcon && notificationIconArea != null && notificationIconArea?.visibility != View.VISIBLE)
+        if (!force && isHiding && !needsRestore) return
         isHiding = true
 
-        "Hiding LyricView".log()
+        "Hiding LyricView (force=$force, needsRestore=$needsRestore)".log()
         goMainThread {
             lyricLayout.hideView(false)
             lyricView.setText("")
@@ -1452,10 +1516,54 @@ class SystemUILyric : BaseHook() {
         }
     }
 
+    private var unlockRecovery450: Runnable? = null
+    private var unlockRecovery1200: Runnable? = null
+
+    private fun cancelUnlockRecovery() {
+        unlockRecovery450?.let { handler.removeCallbacks(it) }
+        unlockRecovery1200?.let { handler.removeCallbacks(it) }
+        unlockRecovery450 = null
+        unlockRecovery1200 = null
+    }
+
+    private fun scheduleUnlockRecovery() {
+        cancelUnlockRecovery()
+
+        val pass1 = Runnable {
+            if (!isReady) return@Runnable
+            isScreenLocked = isActuallyScreenLocked()
+            if (isScreenLocked) return@Runnable
+            if (isMusicPlaying && lastLyric.isNotEmpty() && (isHiding || lyricLayout.visibility != View.VISIBLE)) {
+                "Unlock recovery (+450ms): re-showing lyric".log()
+                updateLyricState()
+            } else if (isSystemAudioPlaying()) {
+                ensureSuperLyricRegistered(pullLatest = true, retriesLeft = 2, forceRebind = false)
+            }
+        }
+        val pass2 = Runnable {
+            if (!isReady) return@Runnable
+            isScreenLocked = isActuallyScreenLocked()
+            if (isScreenLocked) return@Runnable
+            if (isSystemAudioPlaying() && (!isMusicPlaying || isHiding || lyricLayout.visibility != View.VISIBLE)) {
+                "Unlock recovery (+1200ms): audio active but lyric hidden; forcing SuperLyric rebind".log()
+                ensureSuperLyricRegistered(pullLatest = true, retriesLeft = 2, forceRebind = true)
+                if (isMusicPlaying && lastLyric.isNotEmpty()) {
+                    updateLyricState()
+                }
+            }
+        }
+        unlockRecovery450 = pass1
+        unlockRecovery1200 = pass2
+        handler.postDelayed(pass1, 450L)
+        handler.postDelayed(pass2, 1200L)
+    }
+
     inner class ScreenLockReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    cancelUnlockRecovery()
+                    lastUserPresentWallMs = 0L
                     isScreenLocked = true
                     "isScreenLocked: true (ACTION_SCREEN_OFF)".log()
                     if (config.hideLyricWhenLockScreen) {
@@ -1463,19 +1571,28 @@ class SystemUILyric : BaseHook() {
                     }
                 }
 
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                Intent.ACTION_USER_PRESENT -> {
+                    lastUserPresentWallMs = SystemClock.elapsedRealtime()
+                    isScreenLocked = false
+                    "isScreenLocked: false (ACTION_USER_PRESENT)".log()
+                    ensureSuperLyricRegistered(pullLatest = true, retriesLeft = 3, forceRebind = false)
+                    if (isMusicPlaying && lastLyric.isNotEmpty()) {
+                        updateLyricState()
+                    }
+                    scheduleUnlockRecovery()
+                }
+
+                Intent.ACTION_SCREEN_ON -> {
                     isScreenLocked = isActuallyScreenLocked()
-                    "isScreenLocked: $isScreenLocked (${intent.action})".log()
+                    "isScreenLocked: $isScreenLocked (ACTION_SCREEN_ON)".log()
                     if (!isScreenLocked) {
-                        ensureSuperLyricRegistered(
-                            pullLatest = true,
-                            retriesLeft = 3,
-                            forceRebind = intent.action == Intent.ACTION_USER_PRESENT
-                        )
+                        ensureSuperLyricRegistered(pullLatest = true, retriesLeft = 2, forceRebind = false)
                         if (isMusicPlaying && lastLyric.isNotEmpty()) {
                             updateLyricState()
                         }
                     }
+                    // Also schedule recovery in case screen woke before lock delay or unlocked without ACTION_USER_PRESENT.
+                    scheduleUnlockRecovery()
                 }
             }
         }

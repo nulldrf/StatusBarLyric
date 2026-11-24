@@ -159,6 +159,7 @@ object LyricViewTools {
 
     fun View.showView() {
         cancelAnimation()
+        alpha = 1f
         if (isVisible) return
         visibility = View.VISIBLE
         startAnimation(getAlphaAnimation(true, 150))
