@@ -171,8 +171,14 @@ object Tools {
         return m.replaceAll(newString)
     }
 
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
     fun goMainThread(delayed: Long = 0, callback: () -> Unit): Boolean {
-        return Handler(Looper.getMainLooper()).postDelayed({
+        if (delayed == 0L && Looper.myLooper() == Looper.getMainLooper()) {
+            callback()
+            return true
+        }
+        return mainHandler.postDelayed({
             callback()
         }, delayed * 1000)
     }

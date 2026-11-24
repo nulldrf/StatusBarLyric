@@ -255,23 +255,31 @@ class LyricTextView(context: Context) : TextView(context), Choreographer.FrameCa
         }
 
         // Tier 2 & Tier 3: Line-duration / adaptive-tempo synchronized scrolling
-        val durationWallMs = plan.durationWallMs.coerceAtLeast(500L)
-        val leadHoldMs = minOf(
-            (plan.animationDurationMs * 0.35f).toLong() + 40L,
-            (durationWallMs * 0.10f).toLong()
-        ).coerceIn(60L, 240L)
-        val tailHoldMs = maxOf(
-            420L,
-            (durationWallMs * 0.16f).toLong()
-        ).coerceAtMost(850L)
-        val scrollWindowMs = maxOf(300L, durationWallMs - leadHoldMs - tailHoldMs)
+        val durationWallMs = plan.durationWallMs.coerceAtLeast(450L)
+        val overflowRatio = overflowPx / effectiveWidth.coerceAtLeast(1f)
+        // For very long lines (overflow >= visible width), start scrolling almost immediately
+        // so the extra text doesn't get cut off at the end of a short bar.
+        val baseLeadMs = minOf(
+            (plan.animationDurationMs * 0.30f).toLong() + 30L,
+            (durationWallMs * 0.09f).toLong()
+        ).coerceIn(40L, 200L)
+        val leadHoldMs = if (overflowRatio >= 1.2f) {
+            minOf(baseLeadMs, 60L)
+        } else if (overflowRatio >= 0.7f) {
+            minOf(baseLeadMs, 110L)
+        } else {
+            baseLeadMs
+        }
+        val tailHoldMs = (durationWallMs * 0.18f).toLong().coerceIn(220L, 650L)
+        val scrollWindowMs = maxOf(220L, durationWallMs - leadHoldMs - tailHoldMs)
 
         val density = resources.displayMetrics.density.coerceAtLeast(1f)
         val rawSpeedPxPerSec = overflowPx / (scrollWindowMs / 1000f)
-        val minSpeedPxPerSec = 18f * density * dynamicPlaybackSpeed
-        val maxSpeedPxPerSec = 360f * density * dynamicPlaybackSpeed
+        val minSpeedPxPerSec = 20f * density * dynamicPlaybackSpeed
+        // Allow up to 800 dp/s so dense/long lines inside a short rap bar finish cleanly without throttling.
+        val maxSpeedPxPerSec = 800f * density * dynamicPlaybackSpeed
         val effectiveSpeedPxPerSec = rawSpeedPxPerSec.coerceIn(minSpeedPxPerSec, maxSpeedPxPerSec)
-        val effectiveScrollMs = ((overflowPx / effectiveSpeedPxPerSec) * 1000f).toLong().coerceAtLeast(220L)
+        val effectiveScrollMs = ((overflowPx / effectiveSpeedPxPerSec) * 1000f).toLong().coerceAtLeast(180L)
 
         if (elapsedMs <= leadHoldMs) {
             currentX = 0f
@@ -287,7 +295,7 @@ class LyricTextView(context: Context) : TextView(context), Choreographer.FrameCa
         }
 
         val t = (scrollElapsed.toFloat() / effectiveScrollMs.toFloat()).coerceIn(0f, 1f)
-        val eased = trapezoidalEase(t, ramp = 0.06f)
+        val eased = trapezoidalEase(t, ramp = 0.05f)
         currentX = -overflowPx * eased
     }
 
