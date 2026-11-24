@@ -32,9 +32,11 @@ import statusbar.lyric.tools.LogTools.log
 
 @SuppressLint("StaticFieldLeak")
 object ActivityTestTools {
+    private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
 
     fun Context.getClass() {
         this.sendBroadcast(Intent("TestReceiver").apply {
+            setPackage(SYSTEM_UI_PACKAGE)
             addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             putExtra("Type", "GetClass")
             "GetClass".log()
@@ -54,6 +56,7 @@ object ActivityTestTools {
 
     fun Context.showView(data: Data) {
         sendBroadcast(Intent("TestReceiver").apply {
+            setPackage(SYSTEM_UI_PACKAGE)
             addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             putExtra("Type", "ShowView")
             putExtra("DataBundle", data.toBundle())

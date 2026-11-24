@@ -23,12 +23,19 @@
 package statusbar.lyric.hook
 
 import android.annotation.SuppressLint
+import android.app.Application
+import android.app.Instrumentation
+import android.content.Context
 import android.content.res.AssetManager
 import android.content.res.Resources
 import android.os.Build
+import android.util.Log
 import androidx.annotation.RequiresApi
+import io.github.kyuubiran.ezxhelper.core.finder.MethodFinder.`-Static`.methodFinder
+import io.github.kyuubiran.ezxhelper.core.util.ClassUtil.loadClassOrNull
 import io.github.kyuubiran.ezxhelper.xposed.EzXposed
 import io.github.kyuubiran.ezxhelper.xposed.EzXposed.moduleRes
+import io.github.kyuubiran.ezxhelper.xposed.dsl.HookFactory.`-Static`.createHook
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
@@ -44,15 +51,113 @@ import statusbar.lyric.hook.module.SystemUITest
 import statusbar.lyric.tools.LogTools
 import statusbar.lyric.tools.LogTools.log
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainHook : XposedModule() {
 
+    companion object {
+        @Volatile
+        private var currentModule: MainHook? = null
+
+        fun logAlways(message: String, throwable: Throwable? = null) {
+            Log.i(LogTools.TAG, message, throwable)
+            val mod = currentModule ?: return
+            runCatching {
+                if (throwable != null) {
+                    mod.log(Log.INFO, LogTools.TAG, message, throwable)
+                } else {
+                    mod.log(Log.INFO, LogTools.TAG, message)
+                }
+            }
+        }
+
+        /**
+         * Reliably obtains the hooked process's Application/base Context even when
+         * ART inlines final Application.attach(Context) into Instrumentation.newApplication.
+         */
+        @SuppressLint("PrivateApi")
+        fun onApplicationContextReady(callback: (Context) -> Unit) {
+            val fired = AtomicBoolean(false)
+            fun deliver(ctx: Context?) {
+                if (ctx == null) return
+                if (!fired.compareAndSet(false, true)) return
+                runCatching { EzXposed.initAppContext(ctx) }
+                runCatching { callback(ctx) }.onFailure {
+                    logAlways("onApplicationContextReady callback failed", it)
+                }
+            }
+
+            // 1. Check if Application is already created
+            val existingApp = runCatching {
+                val at = Class.forName("android.app.ActivityThread")
+                at.getDeclaredMethod("currentApplication").invoke(null) as? Context
+            }.getOrNull()
+            if (existingApp != null) {
+                logAlways("Application already initialized: ${existingApp.javaClass.name}")
+                deliver(existingApp)
+                return
+            }
+
+            // 2. Deoptimize Instrumentation.newApplication so Application.attach is not inlined
+            runCatching {
+                Instrumentation::class.java.declaredMethods
+                    .filter { it.name == "newApplication" }
+                    .forEach { currentModule?.deoptimize(it) }
+            }
+
+            // 3. Hook Application.attach(Context)
+            runCatching {
+                Application::class.java.methodFinder()
+                    .filterByName("attach")
+                    .filterByParamTypes(Context::class.java)
+                    .first()
+                    .createHook {
+                        after { param ->
+                            val app = param.thisObject as? Context
+                            val base = param.args.firstOrNull() as? Context
+                            deliver(app ?: base)
+                        }
+                    }
+            }.onFailure {
+                logAlways("Hook Application.attach failed", it)
+            }
+
+            // 4. Hook Instrumentation.callApplicationOnCreate(Application) as fallback
+            runCatching {
+                Instrumentation::class.java.methodFinder()
+                    .filterByName("callApplicationOnCreate")
+                    .filterByParamTypes(Application::class.java)
+                    .first()
+                    .createHook {
+                        before { param ->
+                            deliver(param.args.firstOrNull() as? Context)
+                        }
+                    }
+            }.onFailure {
+                logAlways("Hook Instrumentation.callApplicationOnCreate failed", it)
+            }
+
+            // 5. Hook SystemUIApplication.onCreate() as an additional fallback
+            runCatching {
+                loadClassOrNull("com.android.systemui.SystemUIApplication")?.let { clazz ->
+                    clazz.methodFinder().filterByName("onCreate").filterByParamCount(0).firstOrNull()
+                        ?.createHook {
+                            before { param ->
+                                deliver(param.thisObject as? Context)
+                            }
+                        }
+                }
+            }
+        }
+    }
+
     private fun registerProviders() {
+        currentModule = this
         LogTools.xposedLogger = { message, throwable ->
             if (throwable != null) {
-                log(android.util.Log.INFO, LogTools.TAG, message, throwable)
+                log(Log.INFO, LogTools.TAG, message, throwable)
             } else {
-                log(android.util.Log.INFO, LogTools.TAG, message)
+                log(Log.INFO, LogTools.TAG, message)
             }
         }
         XposedOwnSP.remotePrefsProvider = { group ->
@@ -69,9 +174,7 @@ class MainHook : XposedModule() {
             EzXposed.initOnModuleLoaded(this, param)
         }
         ensureModuleResources()
-        XposedOwnSP.remotePrefs = runCatching { getRemotePreferences(Config.CONFIG_NAME) }.getOrNull()
-        config.update()
-        LogTools.init(config.outLog)
+        logAlways("onModuleLoaded: process=${param.processName}, framework=$frameworkName $frameworkVersion (API $apiVersion)")
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
@@ -88,28 +191,35 @@ class MainHook : XposedModule() {
             EzXposed.initOnPackageReady(param)
         }
         ensureModuleResources()
-        if (XposedOwnSP.remotePrefs == null) {
-            XposedOwnSP.remotePrefs = runCatching { getRemotePreferences(Config.CONFIG_NAME) }.getOrNull()
-        }
+
+        val remotePrefs = runCatching { getRemotePreferences(Config.CONFIG_NAME) }
+            .onFailure { logAlways("getRemotePreferences(${Config.CONFIG_NAME}) failed", it) }
+            .getOrNull()
+        XposedOwnSP.remotePrefs = remotePrefs
         config.update()
         LogTools.init(config.outLog)
+
+        logAlways(
+            "onPackageReady: pkg=${param.packageName}, remotePrefs=${remotePrefs != null}, " +
+                "keys=${remotePrefs?.all?.keys}, masterSwitch=${config.masterSwitch}, testMode=${config.testMode}"
+        )
 
         when (param.packageName) {
             "com.android.systemui" -> {
                 if (!config.masterSwitch) {
-                    safeString(R.string.master_off, "Master switch is off").log()
+                    logAlways(safeString(R.string.master_off, "Master switch is off"))
                     return
                 }
-                "${BuildConfig.APPLICATION_ID} - ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}[${Locale.getDefault().language}] *${BuildConfig.BUILD_TYPE})".log()
+                logAlways("${BuildConfig.APPLICATION_ID} - ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}[${Locale.getDefault().language}] *${BuildConfig.BUILD_TYPE})")
                 if (config.testMode) {
-                    safeString(R.string.hook_page, "Anchor Selection Mode").log()
+                    logAlways(safeString(R.string.hook_page, "Anchor Selection Mode"))
                     initHooks(SystemUITest())
                 } else {
-                    safeString(R.string.lyric_mode, "Lyric Mode").log()
+                    logAlways(safeString(R.string.lyric_mode, "Lyric Mode"))
                     try {
                         initHooks(SystemUILyric())
                     } catch (t: Throwable) {
-                        t.log()
+                        logAlways("SystemUILyric init failed", t)
                     }
                 }
             }
@@ -150,7 +260,7 @@ class MainHook : XposedModule() {
                 set(null, fallbackRes)
             }
         }.onFailure {
-            it.log()
+            logAlways("Fallback module resource loading failed", it)
         }
     }
 
@@ -164,10 +274,9 @@ class MainHook : XposedModule() {
                 if (it.isInit) return
                 it.init()
                 it.isInit = true
-                "${safeString(R.string.hook_succeeded, "Hook Succeeded")}:${it.javaClass.simpleName}".log()
+                logAlways("${safeString(R.string.hook_succeeded, "Hook Succeeded")}:${it.javaClass.simpleName}")
             } catch (e: Throwable) {
-                "${safeString(R.string.hook_failed, "Hook Failed")}:${it.javaClass.simpleName}".log()
-                e.log()
+                logAlways("${safeString(R.string.hook_failed, "Hook Failed")}:${it.javaClass.simpleName}", e)
             }
         }
     }

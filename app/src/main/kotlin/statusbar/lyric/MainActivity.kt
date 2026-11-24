@@ -106,7 +106,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        unregisterReceiver(appTestReceiver)
+        runCatching { unregisterReceiver(appTestReceiver) }
         super.onDestroy()
     }
 
@@ -172,10 +172,10 @@ class MainActivity : ComponentActivity() {
     private fun registerReceiver() {
         val filter = IntentFilter("AppTestReceiver")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            appContext.registerReceiver(appTestReceiver, filter, RECEIVER_EXPORTED)
+            this.registerReceiver(appTestReceiver, filter, RECEIVER_EXPORTED)
         } else {
             @Suppress("UnspecifiedRegisterReceiverFlag")
-            appContext.registerReceiver(appTestReceiver, filter)
+            this.registerReceiver(appTestReceiver, filter)
         }
     }
 }

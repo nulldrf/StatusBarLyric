@@ -50,8 +50,10 @@ class XposedApp : Application(), XposedServiceHelper.OnServiceListener {
         xposedService = service
         isModuleActive = true
         MainActivity.isLoad = true
+        frameworkInfo = "${service.frameworkName} ${service.frameworkVersion} (API ${service.apiVersion})"
+        activeScope = runCatching { service.scope }.getOrDefault(emptyList())
         ActivityOwnSP.syncWithRemoteService(service)
-        "XposedService bound: ${service.frameworkName} ${service.frameworkVersion} (API ${service.apiVersion})".log()
+        "XposedService bound: $frameworkInfo, scope=$activeScope".log()
     }
 
     override fun onServiceDied(service: XposedService) {
@@ -60,6 +62,8 @@ class XposedApp : Application(), XposedServiceHelper.OnServiceListener {
         }
         isModuleActive = isHook()
         MainActivity.isLoad = isModuleActive
+        frameworkInfo = ""
+        activeScope = emptyList()
         "XposedService died".log()
     }
 
@@ -72,6 +76,12 @@ class XposedApp : Application(), XposedServiceHelper.OnServiceListener {
             private set
 
         var isModuleActive by mutableStateOf(false)
+            internal set
+
+        var frameworkInfo by mutableStateOf("")
+            internal set
+
+        var activeScope by mutableStateOf<List<String>>(emptyList())
             internal set
 
         fun getRemotePreferences(group: String = Config.CONFIG_NAME): SharedPreferences? {

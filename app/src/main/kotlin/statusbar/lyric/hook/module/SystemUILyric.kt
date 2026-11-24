@@ -229,12 +229,8 @@ class SystemUILyric : BaseHook() {
     @SuppressLint("DiscouragedApi", "NewApi")
     override fun init() {
         "Initializing Hook".log()
-        Application::class.java.methodFinder().filterByName("attach").single().createHook {
-            after { hook ->
-                val appContext = hook.args[0] as Context
-                EzXposed.initAppContext(appContext)
-                registerSuperLyric(appContext)
-            }
+        statusbar.lyric.hook.MainHook.onApplicationContextReady { appContext ->
+            registerSuperLyric(appContext.applicationContext ?: appContext)
         }
 
         loadClassOrNull(config.textViewClassName).isNotNull {
@@ -781,7 +777,9 @@ class SystemUILyric : BaseHook() {
     private fun ensureSuperLyricRegistered(pullLatest: Boolean = false, retriesLeft: Int = 15) {
         runCatching {
             val result = SuperLyric.receiver().register(superLyricV4Listener)
-            "SuperLyric v4 receiver register result: $result".log()
+            statusbar.lyric.hook.MainHook.logAlways(
+                "SuperLyric v4 receiver register result=$result, available=${SuperLyric.isAvailable()}, serverApi=${SuperLyric.serverApiVersion()}"
+            )
             if (result == com.hchen.superlyricapi.Receiver.RegisterResult.OK) {
                 if (pullLatest) {
                     SuperLyric.receiver().latest()?.let { superLyricV4Listener.onLyric(it) }
@@ -792,7 +790,7 @@ class SystemUILyric : BaseHook() {
                 }, 2000L)
             }
         }.onFailure {
-            it.log()
+            statusbar.lyric.hook.MainHook.logAlways("SuperLyric v4 receiver register failed", it)
             if (retriesLeft > 0) {
                 handler.postDelayed({
                     ensureSuperLyricRegistered(pullLatest = true, retriesLeft = retriesLeft - 1)

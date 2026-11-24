@@ -70,25 +70,20 @@ class SystemUITest : BaseHook() {
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun init() {
-        var isLoad = false
-        Application::class.java.methodFinder().filterByName("attach").first().createHook {
-            after {
-                if (isLoad) return@after
-                isLoad = true
-                context = it.args[0] as Context
-                EzXposed.initAppContext(context)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    context.registerReceiver(
-                        TestReceiver(),
-                        IntentFilter("TestReceiver"),
-                        Context.RECEIVER_EXPORTED
-                    )
-                } else {
-                    context.registerReceiver(TestReceiver(), IntentFilter("TestReceiver"))
-                }
-                runCatching { moduleRes.getString(R.string.start_hooking_text_view).log() }
-                hook()
+        statusbar.lyric.hook.MainHook.onApplicationContextReady { appContext ->
+            context = appContext.applicationContext ?: appContext
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(
+                    TestReceiver(),
+                    IntentFilter("TestReceiver"),
+                    Context.RECEIVER_EXPORTED
+                )
+            } else {
+                context.registerReceiver(TestReceiver(), IntentFilter("TestReceiver"))
             }
+            statusbar.lyric.hook.MainHook.logAlways("SystemUITest: TestReceiver registered on ${context.javaClass.name}")
+            runCatching { moduleRes.getString(R.string.start_hooking_text_view).log() }
+            hook()
         }
     }
 
@@ -194,7 +189,9 @@ class SystemUITest : BaseHook() {
 
     inner class TestReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            when (intent.getStringExtra("Type")) {
+            val type = intent.getStringExtra("Type")
+            statusbar.lyric.hook.MainHook.logAlways("SystemUITest.TestReceiver onReceive: type=$type, candidates=${dataHashMap.size}")
+            when (type) {
                 "GetClass" -> {
                     if (dataHashMap.isEmpty()) {
                         runCatching { moduleRes.getString(R.string.no_text_view).log() }

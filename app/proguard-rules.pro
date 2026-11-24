@@ -10,6 +10,7 @@
 -keep class statusbar.lyric.tools.ActivityTools { isHook(); }
 -keep class statusbar.lyric.hook.** { *; }
 -keep class statusbar.lyric.data.** { *; }
+-keep class io.github.kyuubiran.ezxhelper.xposed.EzXposed { *; }
 -keep class com.hchen.superlyricapi.** { *; }
 -keep class io.github.libxposed.service.** { *; }
 -dontwarn io.github.libxposed.api.**

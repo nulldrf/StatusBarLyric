@@ -268,8 +268,23 @@ fun MenuPage(
                         Text(
                             text = "$getPhoneName (${Build.DEVICE}) SDK${Build.VERSION.SDK_INT}",
                             fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                            modifier = Modifier.padding(
+                                start = 12.dp,
+                                end = 12.dp,
+                                bottom = if (statusbar.lyric.XposedApp.frameworkInfo.isEmpty()) 12.dp else 0.dp
+                            )
                         )
+                        if (statusbar.lyric.XposedApp.frameworkInfo.isNotEmpty()) {
+                            Text(
+                                text = "Xposed",
+                                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp)
+                            )
+                            Text(
+                                text = "${statusbar.lyric.XposedApp.frameworkInfo}\nScope: ${statusbar.lyric.XposedApp.activeScope.joinToString()}",
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                            )
+                        }
                     }
                 }
                 Spacer(
@@ -334,9 +349,11 @@ fun RestartDialog(showDialog: MutableState<Boolean>) {
                 modifier = Modifier.weight(1f),
                 text = stringResource(R.string.ok),
                 onClick = {
-                    statusbar.lyric.config.ActivityOwnSP.syncAllToRemote()
-                    Tools.shell("killall com.android.systemui || pkill -f com.android.systemui", true)
                     showDialog.value = false
+                    Thread {
+                        statusbar.lyric.config.ActivityOwnSP.syncAllToRemote()
+                        Tools.shell("pkill -x com.android.systemui || killall com.android.systemui || (pidof com.android.systemui | xargs kill -9)", true)
+                    }.start()
                 }
             )
             Spacer(Modifier.width(20.dp))

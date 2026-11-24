@@ -198,14 +198,8 @@ object Tools {
         try {
             if (isSu) {
                 try {
-                    val p = Runtime.getRuntime().exec("su")
-                    val outputStream = p.outputStream
-                    DataOutputStream(outputStream).apply {
-                        writeBytes(command)
-                        flush()
-                        close()
-                    }
-                    outputStream.close()
+                    val p = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+                    p.waitFor()
                 } catch (_: Exception) {
                     // Su shell command failed
                     Handler(Looper.getMainLooper()).post {
