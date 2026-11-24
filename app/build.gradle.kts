@@ -35,8 +35,8 @@ android {
         applicationId = "statusbar.lyric"
         minSdk = 30
         targetSdk = 37
-        versionCode = 730
-        versionName = "7.3.0"
+        versionCode = 800
+        versionName = "8.0.0"
         buildConfigField("long", "BUILD_TIME", "${buildTime}L")
         buildConfigField("int", "COMPOSE_CONFIG_VERSION", "2")
     }
@@ -103,8 +103,8 @@ androidComponents {
     onVariants { variant ->
         variant.outputs.forEach { output ->
             if (output is VariantOutputImpl) {
-                val vName = output.versionName.getOrElse("7.3.0")
-                val vCode = output.versionCode.getOrElse(730)
+                val vName = output.versionName.getOrElse("8.0.0")
+                val vCode = output.versionCode.getOrElse(800)
                 output.outputFileName.set("StatusBarLyric-$vName($vCode)-${variant.name}-$buildTime.apk")
             }
         }
