@@ -68,11 +68,17 @@ sealed class LyricScrollPlan {
  */
 class LyricTempoTracker {
     companion object {
-        private const val DEFAULT_MS_PER_UNIT = 290f
-        private const val MIN_VALID_MS_PER_UNIT = 90f
-        private const val MAX_VALID_MS_PER_UNIT = 750f
-        private const val MIN_SAMPLE_ELAPSED_MS = 600L
-        private const val MAX_SAMPLE_ELAPSED_MS = 12000L
+        private const val DEFAULT_MS_PER_UNIT = 235f
+        private const val MIN_VALID_MS_PER_UNIT = 80f
+        private const val MAX_VALID_MS_PER_UNIT = 650f
+        private const val MIN_SAMPLE_ELAPSED_MS = 500L
+        private const val MAX_SAMPLE_ELAPSED_MS = 11000L
+
+        // Players typically fire lyric updates ~120-200ms after audio onset, and inter-line intervals
+        // include breath/pause gaps between sentences. Compensating for both keeps scrolling on beat.
+        private const val IPC_DELIVERY_LEAD_MS = 150f
+        private const val EXPLICIT_END_DUTY = 0.92f
+        private const val INTER_LINE_SINGING_DUTY = 0.82f
 
         /**
          * Estimates spoken/sung syllable-like reading units across CJK, Kana, Hangul, Latin,
@@ -179,13 +185,14 @@ class LyricTempoTracker {
         val currentUnits = estimateReadingUnits(lyricText)
 
         // Learn song tempo from wall-clock elapsed time since the previous sentence.
+        // Multiply by INTER_LINE_SINGING_DUTY to strip out the natural silence gap between lines.
         if (lastLineWallMs > 0L && lastLineUnits > 0f && lyricText != lastLyricText) {
             val wallElapsed = nowWallMs - lastLineWallMs
             if (wallElapsed in MIN_SAMPLE_ELAPSED_MS..MAX_SAMPLE_ELAPSED_MS) {
-                val mediaElapsed = wallElapsed * playbackSpeed
+                val mediaElapsed = wallElapsed * playbackSpeed * INTER_LINE_SINGING_DUTY
                 val observed = mediaElapsed / lastLineUnits
                 if (observed in MIN_VALID_MS_PER_UNIT..MAX_VALID_MS_PER_UNIT) {
-                    val alpha = if (sampleCount < 2) 0.55f else 0.30f
+                    val alpha = if (sampleCount < 2) 0.60f else 0.35f
                     emaMsPerUnit = emaMsPerUnit * (1f - alpha) + observed * alpha
                     sampleCount++
                 }
@@ -209,8 +216,8 @@ class LyricTempoTracker {
         }
 
         // Natural singing duration bounds for this sentence (in media ms).
-        val minSingMediaMs = maxOf(800f, currentUnits * 115f)
-        val maxSingMediaMs = maxOf(3800f, currentUnits * 620f)
+        val minSingMediaMs = maxOf(700f, currentUnits * 105f)
+        val maxSingMediaMs = maxOf(3200f, currentUnits * 480f)
 
         // Also learn tempo from explicit line/word durations when available.
         val explicitSpanMs = when {
@@ -231,35 +238,37 @@ class LyricTempoTracker {
         val remainingMediaMs: Float = when {
             // 1. Explicit line end timestamp from SuperLyric
             lineEndMs > anchorPosMs -> {
-                val raw = (lineEndMs - anchorPosMs).toFloat()
-                raw.coerceIn(700f, maxOf(maxSingMediaMs * 1.35f, 12000f))
+                val raw = (lineEndMs - anchorPosMs).toFloat() * EXPLICIT_END_DUTY - IPC_DELIVERY_LEAD_MS
+                raw.coerceIn(600f, maxOf(maxSingMediaMs * 1.25f, 10000f))
             }
             // 2. Word-level end timestamp
             validWords.isNotEmpty() && validWords.last().endMs > anchorPosMs -> {
-                val raw = (validWords.last().endMs - anchorPosMs).toFloat()
-                raw.coerceIn(700f, maxOf(maxSingMediaMs * 1.35f, 12000f))
+                val raw = (validWords.last().endMs - anchorPosMs).toFloat() * EXPLICIT_END_DUTY - IPC_DELIVERY_LEAD_MS
+                raw.coerceIn(600f, maxOf(maxSingMediaMs * 1.25f, 10000f))
             }
-            // 3. Inferred from next line's start timestamp (capped to avoid crawling across instrumental breaks)
+            // 3. Inferred from next line's start timestamp (strip inter-line breath gap & cap instrumental breaks)
             nextLineStartMs > anchorPosMs -> {
-                val raw = (nextLineStartMs - anchorPosMs).toFloat()
-                raw.coerceIn(minOf(raw, minSingMediaMs).coerceAtLeast(700f), maxSingMediaMs)
+                val raw = (nextLineStartMs - anchorPosMs).toFloat() * INTER_LINE_SINGING_DUTY - IPC_DELIVERY_LEAD_MS
+                raw.coerceIn(minOf(raw, minSingMediaMs).coerceAtLeast(600f), maxSingMediaMs)
             }
             // 4. Final line bounded by total song duration
-            songDurationMs > anchorPosMs && (songDurationMs - anchorPosMs) <= 20000L -> {
-                val raw = (songDurationMs - anchorPosMs).toFloat()
-                raw.coerceIn(700f, maxSingMediaMs)
+            songDurationMs > anchorPosMs && (songDurationMs - anchorPosMs) <= 18000L -> {
+                val raw = (songDurationMs - anchorPosMs).toFloat() * INTER_LINE_SINGING_DUTY - IPC_DELIVERY_LEAD_MS
+                raw.coerceIn(600f, maxSingMediaMs)
             }
             // 5. Legacy SuperLyric delay hint (ms)
             legacyDelayMs > 0 -> {
-                legacyDelayMs.toFloat().coerceIn(700f, maxOf(maxSingMediaMs * 1.35f, 12000f))
+                val raw = legacyDelayMs.toFloat() * EXPLICIT_END_DUTY - IPC_DELIVERY_LEAD_MS
+                raw.coerceIn(600f, maxOf(maxSingMediaMs * 1.25f, 10000f))
             }
             // 6. Single-sentence push without timestamps: adaptive per-song tempo * reading units
             else -> {
-                (currentUnits * emaMsPerUnit).coerceIn(1200f, 11000f)
+                val raw = currentUnits * emaMsPerUnit - IPC_DELIVERY_LEAD_MS
+                raw.coerceIn(900f, 9500f)
             }
         }
 
-        val durationWallMs = (remainingMediaMs / playbackSpeed).toLong().coerceIn(600L, 14000L)
+        val durationWallMs = (remainingMediaMs / playbackSpeed).toLong().coerceIn(500L, 12000L)
 
         // Update tracker state for the next sentence.
         if (lyricText != lastLyricText) {

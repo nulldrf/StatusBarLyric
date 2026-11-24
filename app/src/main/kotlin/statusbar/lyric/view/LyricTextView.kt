@@ -134,14 +134,27 @@ class LyricTextView(context: Context) : TextView(context), Choreographer.FrameCa
         text?.let { canvas.drawText(it.toString(), currentX, y, paint) }
     }
 
-    private fun resolveEffectiveWidth(plan: LyricScrollPlan?): Float {
-        if (width > 0) return width.toFloat()
-        if (viewWidth > 0f) return viewWidth
-        return when (plan) {
-            is LyricScrollPlan.Dynamic -> plan.targetWidthPx.toFloat()
-            is LyricScrollPlan.Fixed -> plan.targetWidthPx.toFloat()
-            null -> 0f
+    private val visibleRect = android.graphics.Rect()
+
+    private fun resolveEffectiveWidth(plan: LyricScrollPlan?, elapsedMs: Long): Float {
+        val layoutWidth = when {
+            width > 0 -> width.toFloat()
+            viewWidth > 0f -> viewWidth
+            plan is LyricScrollPlan.Dynamic -> plan.targetWidthPx.toFloat()
+            plan is LyricScrollPlan.Fixed -> plan.targetWidthPx.toFloat()
+            else -> 0f
         }
+        val animDuration = (plan as? LyricScrollPlan.Dynamic)?.animationDurationMs ?: 0L
+        if (layoutWidth > 0f && isAttachedToWindow && isShown && elapsedMs >= animDuration) {
+            if (getGlobalVisibleRect(visibleRect)) {
+                val minValidPx = (24f * resources.displayMetrics.density).toInt()
+                val clippedW = visibleRect.width().toFloat()
+                if (clippedW >= minValidPx && clippedW < layoutWidth) {
+                    return clippedW
+                }
+            }
+        }
+        return layoutWidth
     }
 
     override fun doFrame(frameTimeNanos: Long) {
@@ -157,7 +170,7 @@ class LyricTextView(context: Context) : TextView(context), Choreographer.FrameCa
         val elapsedMs = (frameTimeNanos - startFrameNanos) / 1_000_000L
 
         val plan = scrollPlan
-        val effectiveWidth = resolveEffectiveWidth(plan)
+        val effectiveWidth = resolveEffectiveWidth(plan, elapsedMs)
         if (effectiveWidth <= 0f) {
             Choreographer.getInstance().postFrameCallback(this)
             return
@@ -217,23 +230,23 @@ class LyricTextView(context: Context) : TextView(context), Choreographer.FrameCa
     ) {
         val words = measuredWords
         if (words.size >= 2) {
-            // Tier 1: Word-by-word karaoke-synchronized scrolling
+            // Tier 1: Word-by-word karaoke-synchronized scrolling with 150ms lookahead
             val nowWallMs = frameTimeNanos / 1_000_000L
             val elapsedSinceAnchorMs = (nowWallMs - dynamicAnchorWallMs).coerceAtLeast(0L)
-            val mediaPosMs = dynamicAnchorMediaMs + (elapsedSinceAnchorMs * dynamicPlaybackSpeed)
+            val mediaPosMs = dynamicAnchorMediaMs + ((elapsedSinceAnchorMs + 150L) * dynamicPlaybackSpeed)
 
             val cursorPx = computeWordCursorPx(words, mediaPosMs)
-            // Keep the active word around ~42% from the left edge of the visible lyric box.
-            val targetScroll = (cursorPx - effectiveWidth * 0.42f).coerceIn(0f, overflowPx)
+            // Keep the active word around ~30% from the left edge so upcoming words are always visible ahead of time.
+            val targetScroll = (cursorPx - effectiveWidth * 0.30f).coerceIn(0f, overflowPx)
             val currentScroll = -currentX
 
-            val followFactor = if (dtSec > 0f) 1f - exp(-10f * dtSec) else 1f
+            val followFactor = if (dtSec > 0f) 1f - exp(-16f * dtSec) else 1f
             val nextScroll = (currentScroll + (targetScroll - currentScroll) * followFactor)
                 .coerceIn(0f, overflowPx)
             currentX = -nextScroll
 
             val lastWordEnd = words.last().endMs
-            if (mediaPosMs > lastWordEnd + 450f && abs(nextScroll - targetScroll) < 0.5f) {
+            if (mediaPosMs > lastWordEnd + 350f && abs(nextScroll - targetScroll) < 0.5f) {
                 currentX = -targetScroll
                 invalidate()
                 stopScroll()
@@ -242,23 +255,23 @@ class LyricTextView(context: Context) : TextView(context), Choreographer.FrameCa
         }
 
         // Tier 2 & Tier 3: Line-duration / adaptive-tempo synchronized scrolling
-        val durationWallMs = plan.durationWallMs.coerceAtLeast(600L)
+        val durationWallMs = plan.durationWallMs.coerceAtLeast(500L)
         val leadHoldMs = minOf(
-            plan.animationDurationMs + 140L,
-            (durationWallMs * 0.22f).toLong()
-        ).coerceIn(120L, 650L)
-        val tailHoldMs = minOf(
-            350L,
-            (durationWallMs * 0.12f).toLong()
-        ).coerceAtLeast(100L)
-        val scrollWindowMs = maxOf(350L, durationWallMs - leadHoldMs - tailHoldMs)
+            (plan.animationDurationMs * 0.35f).toLong() + 40L,
+            (durationWallMs * 0.10f).toLong()
+        ).coerceIn(60L, 240L)
+        val tailHoldMs = maxOf(
+            420L,
+            (durationWallMs * 0.16f).toLong()
+        ).coerceAtMost(850L)
+        val scrollWindowMs = maxOf(300L, durationWallMs - leadHoldMs - tailHoldMs)
 
         val density = resources.displayMetrics.density.coerceAtLeast(1f)
         val rawSpeedPxPerSec = overflowPx / (scrollWindowMs / 1000f)
-        val minSpeedPxPerSec = 16f * density * dynamicPlaybackSpeed
-        val maxSpeedPxPerSec = 280f * density * dynamicPlaybackSpeed
+        val minSpeedPxPerSec = 18f * density * dynamicPlaybackSpeed
+        val maxSpeedPxPerSec = 360f * density * dynamicPlaybackSpeed
         val effectiveSpeedPxPerSec = rawSpeedPxPerSec.coerceIn(minSpeedPxPerSec, maxSpeedPxPerSec)
-        val effectiveScrollMs = ((overflowPx / effectiveSpeedPxPerSec) * 1000f).toLong().coerceAtLeast(250L)
+        val effectiveScrollMs = ((overflowPx / effectiveSpeedPxPerSec) * 1000f).toLong().coerceAtLeast(220L)
 
         if (elapsedMs <= leadHoldMs) {
             currentX = 0f
@@ -274,7 +287,7 @@ class LyricTextView(context: Context) : TextView(context), Choreographer.FrameCa
         }
 
         val t = (scrollElapsed.toFloat() / effectiveScrollMs.toFloat()).coerceIn(0f, 1f)
-        val eased = trapezoidalEase(t, ramp = 0.08f)
+        val eased = trapezoidalEase(t, ramp = 0.06f)
         currentX = -overflowPx * eased
     }
 

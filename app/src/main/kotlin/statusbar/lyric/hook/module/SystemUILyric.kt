@@ -1269,6 +1269,131 @@ class SystemUILyric : BaseHook() {
         }
     }
 
+    private fun computeAvailableAnchorWidth(): Int {
+        return runCatching {
+            val screenWidth = context.resources.displayMetrics.widthPixels
+            if (screenWidth <= 0) return 0
+
+            val isRtl = targetView.layoutDirection == View.LAYOUT_DIRECTION_RTL
+            val targetLoc = IntArray(2)
+            targetView.getLocationOnScreen(targetLoc)
+
+            val iconOccupied = if (iconSwitch && iconView.visibility != View.GONE) {
+                val iconW = iconView.width.takeIf { it > 0 }
+                    ?: iconView.layoutParams?.width?.takeIf { it > 0 }
+                    ?: 0
+                iconW + config.iconStartMargins.coerceAtLeast(0)
+            } else {
+                0
+            }
+            val clockOccupied = if (!config.hideTime && clockView.visibility == View.VISIBLE && clockView.width > 0) {
+                clockView.width
+            } else {
+                0
+            }
+            val startMargin = config.lyricStartMargins.coerceAtLeast(0)
+            val endMargin = config.lyricEndMargins.coerceAtLeast(0)
+            val safetyGapPx = statusbar.lyric.tools.Tools.dp2px(context, 4f)
+            val statusBarBottom = maxOf(targetView.height + targetLoc[1], statusbar.lyric.tools.Tools.dp2px(context, 48f))
+            val minClearance = statusbar.lyric.tools.Tools.dp2px(context, 32f)
+
+            val rootInsets = targetView.rootWindowInsets ?: clockView.rootWindowInsets
+            val cutoutRects = rootInsets?.displayCutout?.boundingRects.orEmpty()
+
+            if (!isRtl) {
+                val originX = if (lyricLayout.isAttachedToWindow && lyricLayout.width > 0) {
+                    val lLoc = IntArray(2)
+                    lyricLayout.getLocationOnScreen(lLoc)
+                    lLoc[0] + iconOccupied + startMargin
+                } else {
+                    targetLoc[0] + targetView.paddingLeft + clockOccupied + iconOccupied + startMargin
+                }
+
+                var rightLimit = screenWidth - endMargin
+
+                // 1. Camera cutout boundary to the right of the anchor
+                for (rect in cutoutRects) {
+                    if (rect.top < statusBarBottom && rect.left > originX + minClearance) {
+                        rightLimit = min(rightLimit, rect.left - safetyGapPx - endMargin)
+                    }
+                }
+
+                // 2. Right-side system icons (Wi-Fi / signal / battery)
+                val battery = statusBatteryContainer
+                if (battery != null && battery.isAttachedToWindow && battery.visibility == View.VISIBLE && battery.width > 0) {
+                    val bLoc = IntArray(2)
+                    battery.getLocationOnScreen(bLoc)
+                    if (bLoc[0] > originX + minClearance) {
+                        rightLimit = min(rightLimit, bLoc[0] - safetyGapPx - endMargin)
+                    }
+                }
+
+                // 3. Constrained (non-wrap) parent container bounds in the status bar hierarchy
+                var parent = targetView.parent as? ViewGroup
+                var depth = 0
+                while (parent != null && depth < 3) {
+                    val lpW = parent.layoutParams?.width ?: ViewGroup.LayoutParams.WRAP_CONTENT
+                    if (parent.width > 0 && lpW != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                        val pLoc = IntArray(2)
+                        parent.getLocationOnScreen(pLoc)
+                        val parentRight = pLoc[0] + parent.width - parent.paddingRight - endMargin
+                        if (parentRight > originX + minClearance) {
+                            rightLimit = min(rightLimit, parentRight)
+                        }
+                    }
+                    parent = parent.parent as? ViewGroup
+                    depth++
+                }
+
+                (rightLimit - originX).coerceAtLeast(0)
+            } else {
+                val originRightX = if (lyricLayout.isAttachedToWindow && lyricLayout.width > 0) {
+                    val lLoc = IntArray(2)
+                    lyricLayout.getLocationOnScreen(lLoc)
+                    lLoc[0] + lyricLayout.width - iconOccupied - startMargin
+                } else {
+                    targetLoc[0] + targetView.width - targetView.paddingRight - clockOccupied - iconOccupied - startMargin
+                }
+
+                var leftLimit = endMargin
+
+                for (rect in cutoutRects) {
+                    if (rect.top < statusBarBottom && rect.right < originRightX - minClearance) {
+                        leftLimit = maxOf(leftLimit, rect.right + safetyGapPx + endMargin)
+                    }
+                }
+
+                val battery = statusBatteryContainer
+                if (battery != null && battery.isAttachedToWindow && battery.visibility == View.VISIBLE && battery.width > 0) {
+                    val bLoc = IntArray(2)
+                    battery.getLocationOnScreen(bLoc)
+                    val bRight = bLoc[0] + battery.width
+                    if (bRight < originRightX - minClearance) {
+                        leftLimit = maxOf(leftLimit, bRight + safetyGapPx + endMargin)
+                    }
+                }
+
+                var parent = targetView.parent as? ViewGroup
+                var depth = 0
+                while (parent != null && depth < 3) {
+                    val lpW = parent.layoutParams?.width ?: ViewGroup.LayoutParams.WRAP_CONTENT
+                    if (parent.width > 0 && lpW != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                        val pLoc = IntArray(2)
+                        parent.getLocationOnScreen(pLoc)
+                        val parentLeft = pLoc[0] + parent.paddingLeft + endMargin
+                        if (parentLeft < originRightX - minClearance) {
+                            leftLimit = maxOf(leftLimit, parentLeft)
+                        }
+                    }
+                    parent = parent.parent as? ViewGroup
+                    depth++
+                }
+
+                (originRightX - leftLimit).coerceAtLeast(0)
+            }
+        }.getOrDefault(0)
+    }
+
     private fun getLyricWidth(lyric: String): Int {
         "Getting Lyric Width".log()
         val measured = kotlin.math.ceil(lyricView.measureTextWidth(lyric)).toInt()
@@ -1287,21 +1412,30 @@ class SystemUILyric : BaseHook() {
             kotlin.math.ceil(textView.paint.measureText(lyric)).toInt()
         }
         theoreticalWidth = textWidth
+
+        val anchorAvailable = computeAvailableAnchorWidth()
+        val fallbackAvailable = (targetView.width - config.lyricStartMargins - config.lyricEndMargins).coerceAtLeast(0)
+        val availableWidth = if (anchorAvailable > 0) anchorAvailable else fallbackAvailable
+        "Available anchor width: anchor=$anchorAvailable, fallback=$fallbackAvailable, textWidth=$textWidth".log()
+
         return if (config.lyricWidth == 0) {
-            val availableWidth = targetView.width - config.lyricStartMargins - config.lyricEndMargins
             if (availableWidth > 0) min(textWidth, availableWidth) else textWidth
         } else {
+            val scaled = scaleWidth()
+            val maxBox = if (availableWidth > 0) min(scaled, availableWidth) else scaled
             if (config.fixedLyricWidth) {
-                scaleWidth()
+                maxBox
             } else {
-                min(textWidth, scaleWidth())
+                min(textWidth, maxBox)
             }
         }
     }
 
     private fun scaleWidth(): Int {
         "Scale Width".log()
-        return (config.lyricWidth / 100f * if (context.isLandscape()) displayHeight else displayWidth).toInt()
+        val currentWidth = context.resources.displayMetrics.widthPixels.takeIf { it > 0 }
+            ?: if (context.isLandscape()) displayHeight else displayWidth
+        return (config.lyricWidth / 100f * currentWidth).toInt()
     }
 
     inner class UpdateConfig : BroadcastReceiver() {
