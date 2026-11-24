@@ -30,14 +30,16 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
 import android.os.Build
+import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.github.kyuubiran.ezxhelper.EzXHelper.moduleRes
-import com.github.kyuubiran.ezxhelper.HookFactory.`-Static`.createHook
-import com.github.kyuubiran.ezxhelper.finders.MethodFinder.`-Static`.methodFinder
-import de.robv.android.xposed.XC_MethodHook
+import androidx.core.content.IntentCompat
+import io.github.kyuubiran.ezxhelper.core.finder.MethodFinder.`-Static`.methodFinder
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed.moduleRes
+import io.github.kyuubiran.ezxhelper.xposed.dsl.HookFactory.`-Static`.createHook
 import statusbar.lyric.R
 import statusbar.lyric.config.XposedOwnSP.config
 import statusbar.lyric.data.Data
@@ -49,18 +51,15 @@ import statusbar.lyric.tools.LyricViewTools.showView
 import statusbar.lyric.tools.Tools.dispose
 import statusbar.lyric.tools.Tools.goMainThread
 import java.text.SimpleDateFormat
-import java.time.LocalDateTime
 import java.util.Locale
 
 class SystemUITest : BaseHook() {
-    private lateinit var hook: XC_MethodHook.Unhook
-    private var lastTime: Int = 0
     lateinit var context: Context
     lateinit var lastView: TextView
     var lastViewId = 0
     val testTextView by lazy {
         TextView(context).apply {
-            text = moduleRes.getString(R.string.app_name)
+            text = runCatching { moduleRes.getString(R.string.app_name) }.getOrDefault("StatusBar Lyric")
             isSingleLine = true
             gravity = Gravity.CENTER
             setBackgroundColor(Color.WHITE)
@@ -69,42 +68,40 @@ class SystemUITest : BaseHook() {
     }
     private val dataHashMap by lazy { HashMap<TextView, Data>() }
 
-
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun init() {
-        var isLoad = false
-        Application::class.java.methodFinder().filterByName("attach").first().createHook {
-            after {
-                if (isLoad) return@after
-                isLoad = true
-                context = it.args[0] as Context
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    context.registerReceiver(
-                        TestReceiver(),
-                        IntentFilter("TestReceiver"),
-                        Context.RECEIVER_EXPORTED
-                    )
-                } else {
-                    context.registerReceiver(TestReceiver(), IntentFilter("TestReceiver"))
-                }
-                moduleRes.getString(R.string.start_hooking_text_view).log()
-                hook()
-
+        statusbar.lyric.hook.MainHook.onApplicationContextReady { appContext ->
+            context = appContext.applicationContext ?: appContext
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(
+                    TestReceiver(),
+                    IntentFilter("TestReceiver"),
+                    Context.RECEIVER_EXPORTED
+                )
+            } else {
+                context.registerReceiver(TestReceiver(), IntentFilter("TestReceiver"))
             }
+            statusbar.lyric.hook.MainHook.logAlways("SystemUITest: TestReceiver registered on ${context.javaClass.name}")
+            runCatching { moduleRes.getString(R.string.start_hooking_text_view).log() }
+            hook()
         }
     }
 
     private fun hook() {
-        hook = TextView::class.java.methodFinder().filterByName("onDraw").first().createHook {
+        TextView::class.java.methodFinder().filterByName("onDraw").first().createHook {
             after { hookParam ->
-                canHook {
+                runCatching {
                     val view = (hookParam.thisObject as TextView)
                     val className = hookParam.thisObject::class.java.name
-                    val text = view.text.toString().dispose()
+                    val text = view.text?.toString()?.dispose().orEmpty()
+                    if (text.isEmpty()) return@after
                     text.isTimeSame {
                         if (className.filterClassName()) {
                             view.filterView {
                                 val parentView = (view.parent as LinearLayout)
+                                val entryName = runCatching {
+                                    if (view.id != View.NO_ID) context.resources.getResourceEntryName(view.id) else "no_id"
+                                }.getOrDefault("unknown")
                                 val newData = Data(
                                     className,
                                     view.id,
@@ -113,7 +110,7 @@ class SystemUITest : BaseHook() {
                                     false,
                                     0,
                                     view.textSize,
-                                    context.resources.getResourceEntryName(view.id)
+                                    entryName
                                 )
                                 var index = 0
                                 val exists = dataHashMap.values.any { data ->
@@ -122,9 +119,7 @@ class SystemUITest : BaseHook() {
                                         && data.parentViewClassName == parentView::class.java.name
                                         && data.parentViewId == parentView.id
                                         && data.textSize == view.textSize
-                                        && data.idName == context.resources.getResourceEntryName(
-                                            view.id
-                                        )
+                                        && data.idName == entryName
                                     ) {
                                         index += 1
                                         true
@@ -135,8 +130,10 @@ class SystemUITest : BaseHook() {
                                 if (!exists) {
                                     newData.index = index
                                     dataHashMap[view] = newData
-                                    moduleRes.getString(R.string.first_filter)
-                                        .format(newData, dataHashMap.size).log()
+                                    runCatching {
+                                        moduleRes.getString(R.string.first_filter)
+                                            .format(newData, dataHashMap.size).log()
+                                    }
                                 }
                             }
                         }
@@ -149,7 +146,9 @@ class SystemUITest : BaseHook() {
     private fun String.isTimeSame(callback: () -> Unit) {
         val timeFormat = arrayOf(
             SimpleDateFormat("H:mm", Locale.getDefault()),
-            SimpleDateFormat("h:mm", Locale.getDefault())
+            SimpleDateFormat("h:mm", Locale.getDefault()),
+            SimpleDateFormat("HH:mm", Locale.getDefault()),
+            SimpleDateFormat("hh:mm", Locale.getDefault())
         )
         val nowTime = System.currentTimeMillis()
         timeFormat.forEach {
@@ -158,16 +157,9 @@ class SystemUITest : BaseHook() {
                 return
             }
         }
+        config.update()
         if (config.relaxConditions) {
-            if (this.contains("周")) {
-                callback()
-                return
-            }
-            if (this.contains("月")) {
-                callback()
-                return
-            }
-            if (this.contains("日")) {
+            if (this.contains("周") || this.contains("月") || this.contains("日") || this.contains(":")) {
                 callback()
                 return
             }
@@ -175,6 +167,7 @@ class SystemUITest : BaseHook() {
     }
 
     private fun String.filterClassName(): Boolean {
+        config.update()
         if (config.relaxConditions) return true
         val filterList = arrayListOf("controlcenter", "image", "keyguard")
         filterList.forEach {
@@ -194,38 +187,34 @@ class SystemUITest : BaseHook() {
         }
     }
 
-    private fun canHook(callback: () -> Unit) {
-        val minutes = LocalDateTime.now().minute
-        if (lastTime == 0) {
-            lastTime = minutes
-        } else {
-            if (lastTime - minutes == -1) {
-                hook.unhook()
-            }
-        }
-        callback()
-    }
-
     inner class TestReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            when (intent.getStringExtra("Type")) {
+            val type = intent.getStringExtra("Type")
+            statusbar.lyric.hook.MainHook.logAlways("SystemUITest.TestReceiver onReceive: type=$type, candidates=${dataHashMap.size}")
+            when (type) {
                 "GetClass" -> {
                     if (dataHashMap.isEmpty()) {
-                        moduleRes.getString(R.string.no_text_view).log()
+                        runCatching { moduleRes.getString(R.string.no_text_view).log() }
                         context.receiveClass(arrayListOf())
                         return
                     } else {
-                        moduleRes.getString(R.string.send_text_view_class).format(dataHashMap).log()
+                        runCatching {
+                            moduleRes.getString(R.string.send_text_view_class).format(dataHashMap).log()
+                        }
                         context.receiveClass(ArrayList(dataHashMap.values))
                     }
                 }
 
                 "ShowView" -> {
-                    val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableExtra("Data", Data::class.java)
+                    val bundle = IntentCompat.getParcelableExtra(intent, "DataBundle", Bundle::class.java)
+                    val data = if (bundle != null) {
+                        Data.fromBundle(bundle)
                     } else {
-                        @Suppress("DEPRECATION") intent.getParcelableExtra("Data")
-                    }!!
+                        runCatching {
+                            intent.setExtrasClassLoader(Data::class.java.classLoader)
+                            IntentCompat.getParcelableExtra(intent, "Data", Data::class.java)
+                        }.getOrNull()
+                    } ?: return
                     goMainThread {
                         dataHashMap.forEach { (textview, da) ->
                             if (da.textViewClassName == data.textViewClassName
@@ -235,13 +224,14 @@ class SystemUITest : BaseHook() {
                                 && da.textSize == data.textSize
                                 && da.index == data.index
                             ) {
-                                if (lastViewId != textview.id) {
+                                if (!this@SystemUITest::lastView.isInitialized || lastView !== textview) {
                                     if (this@SystemUITest::lastView.isInitialized) {
-                                        (lastView.parent as LinearLayout).removeView(testTextView)
+                                        runCatching { (lastView.parent as? LinearLayout)?.removeView(testTextView) }
                                         lastView.showView()
                                     }
+                                    runCatching { (testTextView.parent as? android.view.ViewGroup)?.removeView(testTextView) }
                                     textview.hideView()
-                                    val parentLinearLayout = textview.parent as LinearLayout
+                                    val parentLinearLayout = textview.parent as? LinearLayout ?: return@forEach
                                     parentLinearLayout.addView(testTextView, 0)
                                     lastViewId = textview.id
                                     lastView = textview

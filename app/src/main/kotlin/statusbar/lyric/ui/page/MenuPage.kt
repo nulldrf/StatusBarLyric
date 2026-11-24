@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -56,18 +57,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
-import androidx.navigation.NavController
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
+import statusbar.lyric.AppNavigator
+import statusbar.lyric.BlurredTopBar
 import statusbar.lyric.BuildConfig
 import statusbar.lyric.MainActivity
 import statusbar.lyric.R
 import statusbar.lyric.config.ActivityOwnSP
 import statusbar.lyric.config.ActivityOwnSP.config
+import statusbar.lyric.rememberBlurBackdrop
 import statusbar.lyric.tools.ActivityTools
 import statusbar.lyric.tools.BackupTools
 import statusbar.lyric.tools.Tools
@@ -87,19 +84,20 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
-import top.yukonga.miuix.kmp.extra.SuperArrow
-import top.yukonga.miuix.kmp.extra.SuperDialog
-import top.yukonga.miuix.kmp.extra.SuperSwitch
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.icons.useful.Back
+import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.getWindowSize
 import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 @SuppressLint("ContextCastToActivity")
 @Composable
 fun MenuPage(
-    navController: NavController
+    navigator: AppNavigator
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val ac = LocalContext.current as Activity
@@ -107,57 +105,44 @@ fun MenuPage(
     val showLauncherIcon = remember { mutableStateOf(config.showLauncherIcon) }
     val showDialog = remember { mutableStateOf(false) }
     val showResetDialog = remember { mutableStateOf(false) }
-
-    val hazeState = remember { HazeState() }
-    val hazeStyle = HazeStyle(
-        backgroundColor = MiuixTheme.colorScheme.background,
-        tint = HazeTint(
-            MiuixTheme.colorScheme.background.copy(
-                if (scrollBehavior.state.collapsedFraction <= 0f) 1f
-                else lerp(1f, 0.67f, (scrollBehavior.state.collapsedFraction))
-            )
-        )
-    )
+    val backdrop = rememberBlurBackdrop()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                color = Color.Transparent,
-                modifier = Modifier
-                    .hazeEffect(hazeState) {
-                        style = hazeStyle
-                        blurRadius = 25.dp
-                        noiseFactor = 0f
-                    }
-                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
-                    .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
-                title = stringResource(R.string.menu_page),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(
-                        modifier = Modifier.padding(start = 20.dp),
-                        onClick = {
-                            navController.popBackStack()
+            BlurredTopBar(backdrop = backdrop, scrollBehavior = scrollBehavior) {
+                TopAppBar(
+                    color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                        .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
+                    title = stringResource(R.string.menu_page),
+                    scrollBehavior = scrollBehavior,
+                    navigationIcon = {
+                        IconButton(
+                            modifier = Modifier.padding(start = 20.dp),
+                            onClick = {
+                                navigator.popBackStack()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = "Back",
+                                tint = MiuixTheme.colorScheme.onBackground
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Useful.Back,
-                            contentDescription = "Back",
-                            tint = MiuixTheme.colorScheme.onBackground
-                        )
-                    }
-                },
-                defaultWindowInsetsPadding = false
-            )
-        },
-        popupHost = { null }
+                    },
+                    defaultWindowInsetsPadding = false
+                )
+            }
+        }
     ) {
         LazyColumn(
             modifier = Modifier
-                .hazeSource(state = hazeState)
-                .height(getWindowSize().height.dp)
+                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                .fillMaxHeight()
+                .scrollEndHaptic()
                 .overScrollVertical()
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
@@ -173,7 +158,7 @@ fun MenuPage(
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Column {
-                            SuperSwitch(
+                            SwitchPreference(
                                 title = stringResource(R.string.show_launcher_icon),
                                 checked = showLauncherIcon.value,
                                 onCheckedChange = {
@@ -191,12 +176,14 @@ fun MenuPage(
                                 }
                             )
                             if (!BuildConfig.DEBUG) {
-                                SuperSwitch(
+                                SwitchPreference(
                                     title = stringResource(R.string.show_logcat),
                                     checked = outLog.value,
                                     onCheckedChange = {
                                         outLog.value = it
                                         config.outLog = it
+                                        statusbar.lyric.tools.LogTools.init(it)
+                                        ActivityTools.changeConfig()
                                     }
                                 )
                             }
@@ -209,19 +196,19 @@ fun MenuPage(
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Column {
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.backup_config),
                             onClick = {
                                 BackupTools.backup(ac, ActivityOwnSP.ownSP)
                             }
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.recovery_config),
                             onClick = {
                                 BackupTools.recovery(ac, ActivityOwnSP.ownSP)
                             }
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.clear_config),
                             onClick = {
                                 showResetDialog.value = true
@@ -283,8 +270,23 @@ fun MenuPage(
                         Text(
                             text = "$getPhoneName (${Build.DEVICE}) SDK${Build.VERSION.SDK_INT}",
                             fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                            modifier = Modifier.padding(
+                                start = 12.dp,
+                                end = 12.dp,
+                                bottom = if (statusbar.lyric.XposedApp.frameworkInfo.isEmpty()) 12.dp else 0.dp
+                            )
                         )
+                        if (statusbar.lyric.XposedApp.frameworkInfo.isNotEmpty()) {
+                            Text(
+                                text = "Xposed",
+                                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp)
+                            )
+                            Text(
+                                text = "${statusbar.lyric.XposedApp.frameworkInfo}\nScope: ${statusbar.lyric.XposedApp.activeScope.joinToString()}",
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                            )
+                        }
                     }
                 }
                 Spacer(
@@ -302,10 +304,10 @@ fun MenuPage(
 
 @Composable
 fun ResetDialog(showDialog: MutableState<Boolean>) {
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.clear_config),
         summary = stringResource(R.string.clear_config_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         Row(
@@ -336,10 +338,10 @@ fun ResetDialog(showDialog: MutableState<Boolean>) {
 
 @Composable
 fun RestartDialog(showDialog: MutableState<Boolean>) {
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.reset_system_ui),
         summary = stringResource(R.string.restart_systemui_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         Row(
@@ -349,8 +351,11 @@ fun RestartDialog(showDialog: MutableState<Boolean>) {
                 modifier = Modifier.weight(1f),
                 text = stringResource(R.string.ok),
                 onClick = {
-                    Tools.shell("killall com.android.systemui", true)
                     showDialog.value = false
+                    Thread {
+                        statusbar.lyric.config.ActivityOwnSP.syncAllToRemote()
+                        Tools.shell("pkill -x com.android.systemui || killall com.android.systemui || (pidof com.android.systemui | xargs kill -9)", true)
+                    }.start()
                 }
             )
             Spacer(Modifier.width(20.dp))

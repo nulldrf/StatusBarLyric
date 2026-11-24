@@ -32,8 +32,9 @@ object XiaomiUtils {
 
     val isHyperOS by lazy {
         try {
-            getSystemProperties("ro.mi.os.version.incremental")
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+            isXiaomi &&
+                getSystemProperties("ro.mi.os.version.incremental").isNotEmpty() &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
         } catch (_: Exception) {
             false
         }

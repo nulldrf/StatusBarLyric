@@ -22,9 +22,24 @@
 
 package statusbar.lyric.config
 
+import android.content.SharedPreferences
 import statusbar.lyric.config.Config.Companion.CONFIG_NAME
 import statusbar.lyric.tools.Tools
 
 object XposedOwnSP {
-    val config: Config by lazy { Config(Tools.getPref(CONFIG_NAME)) }
+    @Volatile
+    var remotePrefs: SharedPreferences? = null
+        internal set
+
+    @Volatile
+    var remotePrefsProvider: ((String) -> SharedPreferences?)? = null
+        internal set
+
+    @Volatile
+    var emptyClassWarningProvider: (() -> String)? = null
+        internal set
+
+    val config: Config by lazy {
+        Config(remotePrefs ?: Tools.getPref(CONFIG_NAME), readOnly = true)
+    }
 }

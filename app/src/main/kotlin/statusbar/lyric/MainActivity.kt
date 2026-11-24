@@ -55,17 +55,22 @@ class MainActivity : ComponentActivity() {
     lateinit var openDocumentLauncher: ActivityResultLauncher<Intent>
 
     companion object {
-        lateinit var appContext: Context private set
+        lateinit var appContext: Context
+            internal set
 
         var isLoad: Boolean = false
 
+        @Volatile
         var testReceiver = false
+
+        @Volatile
+        var testResponseReceived = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        appContext = this
+        appContext = applicationContext
         enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false // Xiaomi moment, this code must be here
@@ -91,7 +96,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        isLoad = isHook()
+        isLoad = XposedApp.isModuleActive || isHook()
+        XposedApp.isModuleActive = isLoad
         init()
 
         setContent {
@@ -100,11 +106,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        unregisterReceiver(appTestReceiver)
+        runCatching { unregisterReceiver(appTestReceiver) }
         super.onDestroy()
     }
 
     private fun init() {
+        ActivityOwnSP.migrateLegacyPreferences(this)
         ConfigTools(ActivityOwnSP.ownSP)
         updateConfigVer()
         requestPermission()
@@ -124,15 +131,27 @@ class MainActivity : ComponentActivity() {
     }
 
     inner class AppTestReceiver : BroadcastReceiver() {
-        @Suppress("DEPRECATION", "UNCHECKED_CAST")
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.getStringExtra("Type")) {
                 "ReceiveClass" -> {
-                    dataList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getSerializableExtra("DataList", ArrayList<Data>()::class.java)
+                    testResponseReceived = true
+                    val bundleList = androidx.core.content.IntentCompat.getParcelableArrayListExtra(
+                        intent,
+                        "DataBundleList",
+                        Bundle::class.java
+                    )
+                    dataList = if (bundleList != null) {
+                        ArrayList(bundleList.map { Data.fromBundle(it) })
                     } else {
-                        intent.getSerializableExtra("DataList") as ArrayList<Data>
-                    } ?: arrayListOf()
+                        runCatching {
+                            intent.setExtrasClassLoader(Data::class.java.classLoader)
+                            androidx.core.content.IntentCompat.getParcelableArrayListExtra(
+                                intent,
+                                "DataList",
+                                Data::class.java
+                            )
+                        }.getOrNull() ?: arrayListOf()
+                    }
                     if (dataList.isEmpty()) {
                         "DataList is empty".log()
                         Toast.makeText(
@@ -153,10 +172,10 @@ class MainActivity : ComponentActivity() {
     private fun registerReceiver() {
         val filter = IntentFilter("AppTestReceiver")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            appContext.registerReceiver(appTestReceiver, filter, RECEIVER_EXPORTED)
+            this.registerReceiver(appTestReceiver, filter, RECEIVER_EXPORTED)
         } else {
             @Suppress("UnspecifiedRegisterReceiverFlag")
-            appContext.registerReceiver(appTestReceiver, filter)
+            this.registerReceiver(appTestReceiver, filter)
         }
     }
 }

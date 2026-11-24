@@ -26,10 +26,12 @@ import android.util.Log
 
 object LogTools {
     private const val MAX_LENGTH = 4000
-    private const val TAG = "StatusBarLyric"
+    const val TAG = "StatusBarLyric"
     private const val XP_TAG = "LSPosed-Bridge"
     private var outprint = false
 
+    @Volatile
+    var xposedLogger: ((String, Throwable?) -> Unit)? = null
 
     fun Any?.log(): Any? {
         if (!outprint) return this
@@ -37,21 +39,28 @@ object LogTools {
         if (content.length > MAX_LENGTH) {
             val chunkCount = content.length / MAX_LENGTH
             for (i in 0..chunkCount) {
-                val max = 4000 * (i + 1)
+                val max = MAX_LENGTH * (i + 1)
                 val value = if (max >= content.length) {
                     content.substring(MAX_LENGTH * i)
                 } else {
                     content.substring(MAX_LENGTH * i, max)
                 }
-                Log.d(TAG, value)
-                Log.d(XP_TAG, "$TAG:$value")
+                emitLog(value, this as? Throwable)
             }
-
         } else {
-            Log.d(TAG, content)
-            Log.d(XP_TAG, "$TAG:$content")
+            emitLog(content, this as? Throwable)
         }
         return this
+    }
+
+    private fun emitLog(message: String, throwable: Throwable?) {
+        Log.d(TAG, message)
+        val logger = xposedLogger
+        if (logger != null) {
+            runCatching { logger(message, throwable) }
+        } else {
+            Log.d(XP_TAG, "$TAG:$message")
+        }
     }
 
     fun init(out: Boolean) {

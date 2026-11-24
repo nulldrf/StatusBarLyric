@@ -22,13 +22,28 @@
 
 package statusbar.lyric.hook
 
-import com.github.kyuubiran.ezxhelper.EzXHelper
-import com.github.kyuubiran.ezxhelper.EzXHelper.moduleRes
-import de.robv.android.xposed.IXposedHookLoadPackage
-import de.robv.android.xposed.IXposedHookZygoteInit
-import de.robv.android.xposed.callbacks.XC_LoadPackage
+import android.annotation.SuppressLint
+import android.app.Application
+import android.app.Instrumentation
+import android.content.Context
+import android.content.res.AssetManager
+import android.content.res.Resources
+import android.os.Build
+import android.util.Log
+import androidx.annotation.RequiresApi
+import io.github.kyuubiran.ezxhelper.core.finder.MethodFinder.`-Static`.methodFinder
+import io.github.kyuubiran.ezxhelper.core.util.ClassUtil.loadClassOrNull
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed.moduleRes
+import io.github.kyuubiran.ezxhelper.xposed.dsl.HookFactory.`-Static`.createHook
+import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
+import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import statusbar.lyric.BuildConfig
 import statusbar.lyric.R
+import statusbar.lyric.config.Config
+import statusbar.lyric.config.XposedOwnSP
 import statusbar.lyric.config.XposedOwnSP.config
 import statusbar.lyric.hook.module.Self
 import statusbar.lyric.hook.module.SystemUILyric
@@ -36,28 +51,175 @@ import statusbar.lyric.hook.module.SystemUITest
 import statusbar.lyric.tools.LogTools
 import statusbar.lyric.tools.LogTools.log
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
-class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
-    override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
+class MainHook : XposedModule() {
+
+    companion object {
+        @Volatile
+        private var currentModule: MainHook? = null
+
+        fun logAlways(message: String, throwable: Throwable? = null) {
+            Log.i(LogTools.TAG, message, throwable)
+            val mod = currentModule ?: return
+            runCatching {
+                if (throwable != null) {
+                    mod.log(Log.INFO, LogTools.TAG, message, throwable)
+                } else {
+                    mod.log(Log.INFO, LogTools.TAG, message)
+                }
+            }
+        }
+
+        /**
+         * Reliably obtains the hooked process's Application/base Context even when
+         * ART inlines final Application.attach(Context) into Instrumentation.newApplication.
+         */
+        @SuppressLint("PrivateApi")
+        fun onApplicationContextReady(callback: (Context) -> Unit) {
+            val fired = AtomicBoolean(false)
+            fun deliver(ctx: Context?) {
+                if (ctx == null) return
+                if (!fired.compareAndSet(false, true)) return
+                runCatching { EzXposed.initAppContext(ctx) }
+                runCatching { callback(ctx) }.onFailure {
+                    logAlways("onApplicationContextReady callback failed", it)
+                }
+            }
+
+            // 1. Check if Application is already created
+            val existingApp = runCatching {
+                val at = Class.forName("android.app.ActivityThread")
+                at.getDeclaredMethod("currentApplication").invoke(null) as? Context
+            }.getOrNull()
+            if (existingApp != null) {
+                logAlways("Application already initialized: ${existingApp.javaClass.name}")
+                deliver(existingApp)
+                return
+            }
+
+            // 2. Deoptimize Instrumentation.newApplication so Application.attach is not inlined
+            runCatching {
+                Instrumentation::class.java.declaredMethods
+                    .filter { it.name == "newApplication" }
+                    .forEach { currentModule?.deoptimize(it) }
+            }
+
+            // 3. Hook Application.attach(Context)
+            runCatching {
+                Application::class.java.methodFinder()
+                    .filterByName("attach")
+                    .filterByParamTypes(Context::class.java)
+                    .first()
+                    .createHook {
+                        after { param ->
+                            val app = param.thisObject as? Context
+                            val base = param.args.firstOrNull() as? Context
+                            deliver(app ?: base)
+                        }
+                    }
+            }.onFailure {
+                logAlways("Hook Application.attach failed", it)
+            }
+
+            // 4. Hook Instrumentation.callApplicationOnCreate(Application) as fallback
+            runCatching {
+                Instrumentation::class.java.methodFinder()
+                    .filterByName("callApplicationOnCreate")
+                    .filterByParamTypes(Application::class.java)
+                    .first()
+                    .createHook {
+                        before { param ->
+                            deliver(param.args.firstOrNull() as? Context)
+                        }
+                    }
+            }.onFailure {
+                logAlways("Hook Instrumentation.callApplicationOnCreate failed", it)
+            }
+
+            // 5. Hook SystemUIApplication.onCreate() as an additional fallback
+            runCatching {
+                loadClassOrNull("com.android.systemui.SystemUIApplication")?.let { clazz ->
+                    clazz.methodFinder().filterByName("onCreate").filterByParamCount(0).firstOrNull()
+                        ?.createHook {
+                            before { param ->
+                                deliver(param.thisObject as? Context)
+                            }
+                        }
+                }
+            }
+        }
+    }
+
+    private fun registerProviders() {
+        currentModule = this
+        LogTools.xposedLogger = { message, throwable ->
+            if (throwable != null) {
+                log(Log.INFO, LogTools.TAG, message, throwable)
+            } else {
+                log(Log.INFO, LogTools.TAG, message)
+            }
+        }
+        XposedOwnSP.remotePrefsProvider = { group ->
+            runCatching { getRemotePreferences(group) }.getOrNull()
+        }
+        XposedOwnSP.emptyClassWarningProvider = {
+            safeString(R.string.load_class_empty, "Anchor class is empty")
+        }
+    }
+
+    override fun onModuleLoaded(param: ModuleLoadedParam) {
+        registerProviders()
+        runCatching {
+            EzXposed.initOnModuleLoaded(this, param)
+        }
+        ensureModuleResources()
+        logAlways("onModuleLoaded: process=${param.processName}, framework=$frameworkName $frameworkVersion (API $apiVersion)")
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    override fun onPackageLoaded(param: PackageLoadedParam) {
+        runCatching {
+            EzXposed.initOnPackageLoaded(param)
+        }
+    }
+
+    override fun onPackageReady(param: PackageReadyParam) {
+        if (!param.isFirstPackage) return
+        registerProviders()
+        runCatching {
+            EzXposed.initOnPackageReady(param)
+        }
+        ensureModuleResources()
+
+        val remotePrefs = runCatching { getRemotePreferences(Config.CONFIG_NAME) }
+            .onFailure { logAlways("getRemotePreferences(${Config.CONFIG_NAME}) failed", it) }
+            .getOrNull()
+        XposedOwnSP.remotePrefs = remotePrefs
+        config.update()
         LogTools.init(config.outLog)
 
-        EzXHelper.initHandleLoadPackage(lpparam)
-        when (lpparam.packageName) {
+        logAlways(
+            "onPackageReady: pkg=${param.packageName}, remotePrefs=${remotePrefs != null}, " +
+                "keys=${remotePrefs?.all?.keys}, masterSwitch=${config.masterSwitch}, testMode=${config.testMode}"
+        )
+
+        when (param.packageName) {
             "com.android.systemui" -> {
                 if (!config.masterSwitch) {
-                    moduleRes.getString(R.string.master_off).log()
+                    logAlways(safeString(R.string.master_off, "Master switch is off"))
                     return
                 }
-                "${BuildConfig.APPLICATION_ID} - ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}[${Locale.getDefault().language}] *${BuildConfig.BUILD_TYPE})".log()
+                logAlways("${BuildConfig.APPLICATION_ID} - ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}[${Locale.getDefault().language}] *${BuildConfig.BUILD_TYPE})")
                 if (config.testMode) {
-                    moduleRes.getString(R.string.hook_page).log()
+                    logAlways(safeString(R.string.hook_page, "Anchor Selection Mode"))
                     initHooks(SystemUITest())
                 } else {
-                    moduleRes.getString(R.string.lyric_mode).log()
+                    logAlways(safeString(R.string.lyric_mode, "Lyric Mode"))
                     try {
                         initHooks(SystemUILyric())
                     } catch (t: Throwable) {
-                        t.log()
+                        logAlways("SystemUILyric init failed", t)
                     }
                 }
             }
@@ -68,12 +230,42 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         }
     }
 
-    override fun initZygote(startupParam: IXposedHookZygoteInit.StartupParam) {
-        EzXHelper.initZygote(startupParam)
-        if (!config.masterSwitch) {
-            moduleRes.getString(R.string.master_off).log()
-            return
+    @SuppressLint("DiscouragedPrivateApi", "PrivateApi")
+    private fun ensureModuleResources() {
+        val loaded = runCatching {
+            EzXposed.initModuleResources()
+            moduleRes.getString(R.string.app_name)
+            true
+        }.getOrDefault(false)
+        if (loaded) return
+
+        runCatching {
+            val sourceDir = moduleApplicationInfo.sourceDir
+            val sysRes = Resources.getSystem()
+            val assetManager = AssetManager::class.java.getDeclaredConstructor().apply {
+                isAccessible = true
+            }.newInstance()
+            val addAssetPath = AssetManager::class.java.getDeclaredMethod("addAssetPath", String::class.java).apply {
+                isAccessible = true
+            }
+            addAssetPath.invoke(assetManager, sourceDir)
+            @Suppress("DEPRECATION")
+            val fallbackRes = Resources(assetManager, sysRes.displayMetrics, sysRes.configuration)
+            EzXposed::class.java.getDeclaredField("modulePath").apply {
+                isAccessible = true
+                set(null, sourceDir)
+            }
+            EzXposed::class.java.getDeclaredField("moduleRes").apply {
+                isAccessible = true
+                set(null, fallbackRes)
+            }
+        }.onFailure {
+            logAlways("Fallback module resource loading failed", it)
         }
+    }
+
+    private fun safeString(resId: Int, fallback: String): String {
+        return runCatching { moduleRes.getString(resId) }.getOrDefault(fallback)
     }
 
     private fun initHooks(vararg hook: BaseHook) {
@@ -82,10 +274,9 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 if (it.isInit) return
                 it.init()
                 it.isInit = true
-                "${moduleRes.getString(R.string.hook_succeeded)}:${it.javaClass.simpleName}".log()
-            } catch (e: Exception) {
-                "${moduleRes.getString(R.string.hook_failed)}:${it.javaClass.simpleName}".log()
-                e.log()
+                logAlways("${safeString(R.string.hook_succeeded, "Hook Succeeded")}:${it.javaClass.simpleName}")
+            } catch (e: Throwable) {
+                logAlways("${safeString(R.string.hook_failed, "Hook Failed")}:${it.javaClass.simpleName}", e)
             }
         }
     }

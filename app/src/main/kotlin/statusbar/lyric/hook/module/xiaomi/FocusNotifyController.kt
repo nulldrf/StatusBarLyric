@@ -26,11 +26,11 @@ import android.graphics.Rect
 import android.os.Message
 import android.view.MotionEvent
 import android.widget.FrameLayout
-import com.github.kyuubiran.ezxhelper.ClassUtils
-import com.github.kyuubiran.ezxhelper.EzXHelper
-import com.github.kyuubiran.ezxhelper.HookFactory.`-Static`.createHook
-import com.github.kyuubiran.ezxhelper.finders.ConstructorFinder.`-Static`.constructorFinder
-import com.github.kyuubiran.ezxhelper.finders.MethodFinder.`-Static`.methodFinder
+import io.github.kyuubiran.ezxhelper.core.finder.ConstructorFinder.`-Static`.constructorFinder
+import io.github.kyuubiran.ezxhelper.core.finder.MethodFinder.`-Static`.methodFinder
+import io.github.kyuubiran.ezxhelper.core.util.ClassUtil
+import io.github.kyuubiran.ezxhelper.xposed.EzXposed
+import io.github.kyuubiran.ezxhelper.xposed.dsl.HookFactory.`-Static`.createHook
 import statusbar.lyric.R
 import statusbar.lyric.config.XposedOwnSP
 import statusbar.lyric.hook.module.SystemUILyric
@@ -57,8 +57,8 @@ class FocusNotifyController {
             if (!XiaomiUtils.isXiaomi) return
             if (!XposedOwnSP.config.automateFocusedNotice) return
 
-            EzXHelper.moduleRes.getString(R.string.automate_focused_notice).log()
-            ClassUtils.loadClassOrNull("com.android.systemui.statusbar.phone.FocusedNotifPromptController").isNotNull {
+            EzXposed.moduleRes.getString(R.string.automate_focused_notice).log()
+            ClassUtil.loadClassOrNull("com.android.systemui.statusbar.phone.FocusedNotifPromptController").isNotNull {
                 it.constructorFinder().singleOrNull().ifNotNull { constructor ->
                     constructor.createHook {
                         after { hook ->
@@ -83,14 +83,14 @@ class FocusNotifyController {
             }
 
             val shouldShowMethod =
-                ClassUtils.loadClassOrNull("com.android.systemui.statusbar.phone.FocusedNotifPromptController").ifNotNull {
+                ClassUtil.loadClassOrNull("com.android.systemui.statusbar.phone.FocusedNotifPromptController").ifNotNull {
                     it.declaredMethods.singleOrNull { method -> method.name == "shouldShow" }
                 }
             if (shouldShowMethod.isNotNull()) {
                 canHideFocusNotify = true
                 (shouldShowMethod as Method).createHook {
                     after { hook ->
-                        val show = hook.result as Boolean
+                        val show = hook.result as? Boolean ?: return@after
                         if (show) {
                             if (!isHideFocusNotify) {
                                 isInteraction = true
@@ -111,10 +111,10 @@ class FocusNotifyController {
                 }
             } else {
                 canHideFocusNotify = false
-                ClassUtils.loadClassOrNull("com.android.systemui.statusbar.phone.FocusedNotifPromptController$2").isNotNull {
-                    it.methodFinder().filterByName("handleMessage").single().createHook {
+                ClassUtil.loadClassOrNull("com.android.systemui.statusbar.phone.FocusedNotifPromptController$2").isNotNull {
+                    it.methodFinder().filterByName("handleMessage").firstOrNull()?.createHook {
                         before { hook ->
-                            val message = hook.args[0] as Message
+                            val message = hook.args[0] as? Message ?: return@before
                             if (message.what == 1003) {
                                 val show = isFocusNotifyShowing()
                                 if (systemUILyric.isMusicPlaying) {
@@ -143,12 +143,14 @@ class FocusNotifyController {
             val mContent = focusedNotify!!.getObjectField("mContent")
             if (mIcon == null || mContent == null) return
             Tools.goMainThread {
-                focusedNotify!!.callMethod("cancelFolme")
-                focusedNotify!!.callMethod("hideImmediately", mIcon)
-                focusedNotify!!.callMethod("hideImmediately", mContent)
-                focusedNotify!!.callMethod("setIsFocusedNotifPromptShowing", false)
-                isHideFocusNotify = true
-                "Hiding focus notify".log()
+                runCatching {
+                    focusedNotify?.callMethod("cancelFolme")
+                    focusedNotify?.callMethod("hideImmediately", mIcon)
+                    focusedNotify?.callMethod("hideImmediately", mContent)
+                    focusedNotify?.callMethod("setIsFocusedNotifPromptShowing", false)
+                    isHideFocusNotify = true
+                    "Hiding focus notify".log()
+                }
             }
         }
 
@@ -162,11 +164,13 @@ class FocusNotifyController {
             if (mIcon == null || mContent == null) return
             isHideFocusNotify = false
             Tools.goMainThread {
-                focusedNotify!!.callMethod("cancelFolme")
-                focusedNotify!!.callMethod("showImmediately", mIcon)
-                focusedNotify!!.callMethod("showImmediately", mContent)
-                focusedNotify!!.callMethod("setIsFocusedNotifPromptShowing", true)
-                "Showing focus notify".log()
+                runCatching {
+                    focusedNotify?.callMethod("cancelFolme")
+                    focusedNotify?.callMethod("showImmediately", mIcon)
+                    focusedNotify?.callMethod("showImmediately", mContent)
+                    focusedNotify?.callMethod("setIsFocusedNotifPromptShowing", true)
+                    "Showing focus notify".log()
+                }
             }
         }
 
@@ -183,11 +187,11 @@ class FocusNotifyController {
             if (!isFocusNotifyShowing()) return false
             if (isHideFocusNotify) return false
 
-            val focusedNotifyPromptView = focusedNotify!!.getObjectField("mView") ?: return false
+            val focusedNotifyPromptView = focusedNotify?.getObjectField("mView") ?: return false
 
             val x = motionEvent.rawX
-            val rect = focusedNotifyPromptView.getObjectField("mRect") as Rect
-            val mContent = focusedNotifyPromptView.getObjectField("mContent") as FrameLayout
+            val rect = focusedNotifyPromptView.getObjectField("mRect") as? Rect ?: return false
+            val mContent = focusedNotifyPromptView.getObjectField("mContent") as? FrameLayout ?: return false
             val right = rect.right
             if (right <= 0 || rect.left == right) {
                 mContent.getGlobalVisibleRect(rect)

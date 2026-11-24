@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -52,15 +53,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
-import androidx.navigation.NavController
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
+import statusbar.lyric.AppNavigator
+import statusbar.lyric.BlurredTopBar
 import statusbar.lyric.R
 import statusbar.lyric.config.ActivityOwnSP.config
+import statusbar.lyric.rememberBlurBackdrop
 import statusbar.lyric.tools.ActivityTools
 import statusbar.lyric.tools.ActivityTools.changeConfig
 import statusbar.lyric.tools.AnimTools
@@ -78,18 +75,19 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
-import top.yukonga.miuix.kmp.extra.SuperArrow
-import top.yukonga.miuix.kmp.extra.SuperDialog
-import top.yukonga.miuix.kmp.extra.SuperSwitch
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.icons.useful.Back
+import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.getWindowSize
 import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 @Composable
 fun IconPage(
-    navController: NavController
+    navigator: AppNavigator
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val iconSwitch = remember { mutableStateOf(config.iconSwitch) }
@@ -102,57 +100,44 @@ fun IconPage(
     val showIconBottomMarginsDialog = remember { mutableStateOf(false) }
     val showIconStartMarginsDialog = remember { mutableStateOf(false) }
     val showIconChangeAllIconsDialog = remember { mutableStateOf(false) }
-
-    val hazeState = remember { HazeState() }
-    val hazeStyle = HazeStyle(
-        backgroundColor = MiuixTheme.colorScheme.background,
-        tint = HazeTint(
-            MiuixTheme.colorScheme.background.copy(
-                if (scrollBehavior.state.collapsedFraction <= 0f) 1f
-                else lerp(1f, 0.67f, (scrollBehavior.state.collapsedFraction))
-            )
-        )
-    )
+    val backdrop = rememberBlurBackdrop()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                color = Color.Transparent,
-                modifier = Modifier
-                    .hazeEffect(hazeState) {
-                        style = hazeStyle
-                        blurRadius = 25.dp
-                        noiseFactor = 0f
-                    }
-                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
-                    .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
-                title = stringResource(R.string.icon_page),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(
-                        modifier = Modifier.padding(start = 20.dp),
-                        onClick = {
-                            navController.popBackStack()
+            BlurredTopBar(backdrop = backdrop, scrollBehavior = scrollBehavior) {
+                TopAppBar(
+                    color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                        .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
+                    title = stringResource(R.string.icon_page),
+                    scrollBehavior = scrollBehavior,
+                    navigationIcon = {
+                        IconButton(
+                            modifier = Modifier.padding(start = 20.dp),
+                            onClick = {
+                                navigator.popBackStack()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = "Back",
+                                tint = MiuixTheme.colorScheme.onBackground
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Useful.Back,
-                            contentDescription = "Back",
-                            tint = MiuixTheme.colorScheme.onBackground
-                        )
-                    }
-                },
-                defaultWindowInsetsPadding = false
-            )
-        },
-        popupHost = { null }
+                    },
+                    defaultWindowInsetsPadding = false
+                )
+            }
+        }
     ) {
         LazyColumn(
             modifier = Modifier
-                .hazeSource(state = hazeState)
-                .height(getWindowSize().height.dp)
+                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                .fillMaxHeight()
+                .scrollEndHaptic()
                 .overScrollVertical()
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
@@ -167,7 +152,7 @@ fun IconPage(
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.icon_switch),
                             checked = iconSwitch.value,
                             onCheckedChange = {
@@ -213,21 +198,21 @@ fun IconPage(
                                     .padding(horizontal = 12.dp)
                                     .padding(bottom = 6.dp)
                             ) {
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.icon_size),
                                     onClick = {
                                         showIconSizeDialog.value = true
                                     },
                                     holdDownState = showIconSizeDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.icon_color_and_transparency),
                                     onClick = {
                                         showIconColorDialog.value = true
                                     },
                                     holdDownState = showIconColorDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.icon_background_color_and_transparency),
                                     onClick = {
                                         showIconBgColorDialog.value = true
@@ -253,21 +238,21 @@ fun IconPage(
                                     .padding(horizontal = 12.dp)
                                     .padding(bottom = 6.dp)
                             ) {
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.icon_top_margins),
                                     onClick = {
                                         showIconTopMarginsDialog.value = true
                                     },
                                     holdDownState = showIconTopMarginsDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.icon_bottom_margins),
                                     onClick = {
                                         showIconBottomMarginsDialog.value = true
                                     },
                                     holdDownState = showIconBottomMarginsDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.icon_start_margins),
                                     onClick = {
                                         showIconStartMarginsDialog.value = true
@@ -293,7 +278,7 @@ fun IconPage(
                                     .padding(horizontal = 12.dp)
                                     .padding(bottom = 6.dp)
                             ) {
-                                SuperSwitch(
+                                SwitchPreference(
                                     title = stringResource(R.string.force_the_icon_to_be_displayed),
                                     checked = forceTheIconToBeDisplayed.value,
                                     onCheckedChange = {
@@ -302,7 +287,7 @@ fun IconPage(
                                         changeConfig()
                                     }
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.change_all_icons),
                                     onClick = {
                                         showIconChangeAllIconsDialog.value = true
@@ -357,10 +342,10 @@ fun IconPage(
 @Composable
 fun IconSizeDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.iconSize.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.icon_size),
         summary = stringResource(R.string.icon_size_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -400,10 +385,10 @@ fun IconSizeDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun IconColorDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.iconColor) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.icon_color_and_transparency),
         summary = stringResource(R.string.icon_color_and_transparency_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -438,10 +423,10 @@ fun IconColorDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun IconBgColorDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.iconBgColor) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.icon_background_color_and_transparency),
         summary = stringResource(R.string.icon_background_color_and_transparency_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -476,10 +461,10 @@ fun IconBgColorDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun IconTopMarginsDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.iconTopMargins.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.icon_top_margins),
         summary = stringResource(R.string.icon_top_margins_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = {
             showDialog.value = false
         },
@@ -521,10 +506,10 @@ fun IconTopMarginsDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun IconBottomMarginsDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.iconBottomMargins.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.icon_bottom_margins),
         summary = stringResource(R.string.icon_bottom_margins_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -564,10 +549,10 @@ fun IconBottomMarginsDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun IconStartMarginsDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.iconStartMargins.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.icon_start_margins),
         summary = stringResource(R.string.icon_start_margins_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -608,10 +593,10 @@ fun IconStartMarginsDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun IconChangeAllIconsDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.changeAllIcons) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.change_all_icons),
         summary = stringResource(R.string.change_all_icons_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(

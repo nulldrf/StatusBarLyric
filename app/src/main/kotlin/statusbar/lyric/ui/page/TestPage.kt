@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -46,17 +47,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
-import androidx.navigation.NavController
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
+import statusbar.lyric.AppNavigator
+import statusbar.lyric.BlurredTopBar
 import statusbar.lyric.MainActivity
 import statusbar.lyric.MainActivity.Companion.testReceiver
 import statusbar.lyric.R
 import statusbar.lyric.config.ActivityOwnSP.config
+import statusbar.lyric.rememberBlurBackdrop
 import statusbar.lyric.tools.ActivityTestTools.getClass
 import statusbar.lyric.tools.ActivityTools.showToastOnLooper
 import statusbar.lyric.tools.Tools.goMainThread
@@ -69,76 +66,65 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
-import top.yukonga.miuix.kmp.extra.SuperArrow
-import top.yukonga.miuix.kmp.extra.SuperSwitch
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.icons.useful.Back
+import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.getWindowSize
 import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 @Composable
 fun TestPage(
-    navController: NavController,
+    navigator: AppNavigator,
     currentRoute: String
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val showDialog = remember { mutableStateOf(false) }
     val testMode = remember { mutableStateOf(config.testMode) }
     val relaxConditions = remember { mutableStateOf(config.relaxConditions) }
-
-    val hazeState = remember { HazeState() }
-    val hazeStyle = HazeStyle(
-        backgroundColor = MiuixTheme.colorScheme.background,
-        tint = HazeTint(
-            MiuixTheme.colorScheme.background.copy(
-                if (scrollBehavior.state.collapsedFraction <= 0f) 1f
-                else lerp(1f, 0.67f, (scrollBehavior.state.collapsedFraction))
-            )
-        )
-    )
+    val backdrop = rememberBlurBackdrop()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                color = Color.Transparent,
-                modifier = Modifier
-                    .hazeEffect(hazeState) {
-                        style = hazeStyle
-                        blurRadius = 25.dp
-                        noiseFactor = 0f
-                    }
-                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
-                    .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
-                title = stringResource(R.string.hook_page),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(
-                        modifier = Modifier.padding(start = 20.dp),
-                        onClick = {
-                            navController.popBackStack()
+            BlurredTopBar(backdrop = backdrop, scrollBehavior = scrollBehavior) {
+                TopAppBar(
+                    color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                        .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
+                    title = stringResource(R.string.hook_page),
+                    scrollBehavior = scrollBehavior,
+                    navigationIcon = {
+                        IconButton(
+                            modifier = Modifier.padding(start = 20.dp),
+                            onClick = {
+                                navigator.popBackStack()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = "Back",
+                                tint = MiuixTheme.colorScheme.onBackground
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Useful.Back,
-                            contentDescription = "Back",
-                            tint = MiuixTheme.colorScheme.onBackground
-                        )
-                    }
-                },
-                defaultWindowInsetsPadding = false
-            )
-        },
-        popupHost = { null }
+                    },
+                    defaultWindowInsetsPadding = false
+                )
+            }
+        }
     ) {
         LazyColumn(
             modifier = Modifier
-                .hazeSource(state = hazeState)
-                .height(getWindowSize().height.dp)
+                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                .fillMaxHeight()
+                .scrollEndHaptic()
                 .overScrollVertical()
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
@@ -153,7 +139,7 @@ fun TestPage(
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.test_mode),
                             checked = testMode.value,
                             onCheckedChange = {
@@ -163,7 +149,7 @@ fun TestPage(
                         )
                         AnimatedVisibility(testMode.value) {
                             Column {
-                                SuperSwitch(
+                                SwitchPreference(
                                     title = stringResource(R.string.relax_conditions),
                                     summary = stringResource(R.string.relax_conditions_tips),
                                     checked = relaxConditions.value,
@@ -172,46 +158,38 @@ fun TestPage(
                                         config.relaxConditions = it
                                     }
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.get_hook),
                                     titleColor = BasicComponentDefaults.titleColor(
                                         color = MiuixTheme.colorScheme.primary
                                     ),
-                                    rightText = stringResource(R.string.tips1),
+                                    endActions = {
+                                        Text(
+                                            text = stringResource(R.string.tips1),
+                                            fontSize = MiuixTheme.textStyles.body2.fontSize,
+                                            color = MiuixTheme.colorScheme.onSurfaceVariantActions
+                                        )
+                                    },
                                     onClick = {
+                                        MainActivity.testReceiver = false
+                                        MainActivity.testResponseReceived = false
                                         MainActivity.appContext.getClass()
-                                        when (testReceiver) {
-                                            true -> if (currentRoute != "ChoosePage") {
-                                                navController.navigate("ChoosePage") {
-                                                    popUpTo("TestPage") {
-                                                        inclusive = false
+                                        Thread {
+                                            var waitedMs = 0
+                                            while (waitedMs < 2500 && !MainActivity.testResponseReceived) {
+                                                Thread.sleep(100)
+                                                waitedMs += 100
+                                            }
+                                            goMainThread {
+                                                if (testReceiver) {
+                                                    if (currentRoute != "ChoosePage") {
+                                                        navigator.navigate("ChoosePage", popUpToRoute = "TestPage")
                                                     }
-                                                    launchSingleTop = true
-                                                    restoreState = true
+                                                } else if (!MainActivity.testResponseReceived) {
+                                                    showToastOnLooper(MainActivity.appContext.getString(R.string.broadcast_receive_timeout))
                                                 }
                                             }
-
-                                            else -> {
-                                                Thread {
-                                                    Thread.sleep(500)
-                                                    goMainThread {
-                                                        if (testReceiver) {
-                                                            if (currentRoute != "ChoosePage") {
-                                                                navController.navigate("ChoosePage") {
-                                                                    popUpTo("TestPage") {
-                                                                        inclusive = false
-                                                                    }
-                                                                    launchSingleTop = true
-                                                                    restoreState = true
-                                                                }
-                                                            }
-                                                        } else {
-                                                            showToastOnLooper(MainActivity.appContext.getString(R.string.broadcast_receive_timeout))
-                                                        }
-                                                    }
-                                                }.start()
-                                            }
-                                        }
+                                        }.start()
                                     },
                                     holdDownState = currentRoute == "ChoosePage"
                                 )

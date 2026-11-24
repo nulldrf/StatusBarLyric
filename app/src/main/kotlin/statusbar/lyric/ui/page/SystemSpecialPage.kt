@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -53,15 +54,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
-import androidx.navigation.NavController
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
+import statusbar.lyric.AppNavigator
+import statusbar.lyric.BlurredTopBar
 import statusbar.lyric.R
 import statusbar.lyric.config.ActivityOwnSP.config
+import statusbar.lyric.rememberBlurBackdrop
 import statusbar.lyric.tools.ActivityTools
 import statusbar.lyric.tools.Tools.isNotNull
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -77,18 +74,19 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
-import top.yukonga.miuix.kmp.extra.SuperArrow
-import top.yukonga.miuix.kmp.extra.SuperDialog
-import top.yukonga.miuix.kmp.extra.SuperSwitch
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.icons.useful.Back
+import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.getWindowSize
 import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 @Composable
 fun SystemSpecialPage(
-    navController: NavController
+    navigator: AppNavigator
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val mMiuiHideNetworkSpeed = remember { mutableStateOf(config.mMiuiHideNetworkSpeed) }
@@ -100,57 +98,44 @@ fun SystemSpecialPage(
     val showRadioDialog = remember { mutableStateOf(false) }
     val showCornerDialog = remember { mutableStateOf(false) }
     val showBgColorDialog = remember { mutableStateOf(false) }
-
-    val hazeState = remember { HazeState() }
-    val hazeStyle = HazeStyle(
-        backgroundColor = MiuixTheme.colorScheme.background,
-        tint = HazeTint(
-            MiuixTheme.colorScheme.background.copy(
-                if (scrollBehavior.state.collapsedFraction <= 0f) 1f
-                else lerp(1f, 0.67f, (scrollBehavior.state.collapsedFraction))
-            )
-        )
-    )
+    val backdrop = rememberBlurBackdrop()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                color = Color.Transparent,
-                modifier = Modifier
-                    .hazeEffect(hazeState) {
-                        style = hazeStyle
-                        blurRadius = 25.dp
-                        noiseFactor = 0f
-                    }
-                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
-                    .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
-                title = stringResource(R.string.system_special_page),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(
-                        modifier = Modifier.padding(start = 20.dp),
-                        onClick = {
-                            navController.popBackStack()
+            BlurredTopBar(backdrop = backdrop, scrollBehavior = scrollBehavior) {
+                TopAppBar(
+                    color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                        .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
+                    title = stringResource(R.string.system_special_page),
+                    scrollBehavior = scrollBehavior,
+                    navigationIcon = {
+                        IconButton(
+                            modifier = Modifier.padding(start = 20.dp),
+                            onClick = {
+                                navigator.popBackStack()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = "Back",
+                                tint = MiuixTheme.colorScheme.onBackground
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Useful.Back,
-                            contentDescription = "Back",
-                            tint = MiuixTheme.colorScheme.onBackground
-                        )
-                    }
-                },
-                defaultWindowInsetsPadding = false
-            )
-        },
-        popupHost = { null }
+                    },
+                    defaultWindowInsetsPadding = false
+                )
+            }
+        }
     ) {
         LazyColumn(
             modifier = Modifier
-                .hazeSource(state = hazeState)
-                .height(getWindowSize().height.dp)
+                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                .fillMaxHeight()
+                .scrollEndHaptic()
                 .overScrollVertical()
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
@@ -169,7 +154,7 @@ fun SystemSpecialPage(
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 6.dp)
                     ) {
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.miui_hide_network_speed),
                             checked = mMiuiHideNetworkSpeed.value,
                             onCheckedChange = {
@@ -177,9 +162,8 @@ fun SystemSpecialPage(
                                 config.mMiuiHideNetworkSpeed = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.miui_pad_optimize),
-
                             checked = mMiuiPadOptimize.value,
                             onCheckedChange = {
                                 mMiuiPadOptimize.value = it
@@ -187,7 +171,7 @@ fun SystemSpecialPage(
                             }
                         )
                         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.TIRAMISU) {
-                            SuperSwitch(
+                            SwitchPreference(
                                 title = stringResource(R.string.hide_carrier),
                                 checked = hideCarrier.value,
                                 onCheckedChange = {
@@ -207,7 +191,7 @@ fun SystemSpecialPage(
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 6.dp)
                     ) {
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.automate_focused_notice),
                             checked = mAutomateFocusedNotice.value,
                             onCheckedChange = {
@@ -215,7 +199,7 @@ fun SystemSpecialPage(
                                 config.automateFocusedNotice = it
                             }
                         )
-                        SuperSwitch(
+                        SwitchPreference(
                             title = stringResource(R.string.hyperos_texture),
                             checked = mHyperOSTexture.value,
                             onCheckedChange = {
@@ -225,21 +209,21 @@ fun SystemSpecialPage(
                         )
                         AnimatedVisibility(mHyperOSTexture.value) {
                             Column {
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.hyperos_texture_radio),
                                     onClick = {
                                         showRadioDialog.value = true
                                     },
                                     holdDownState = showRadioDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.hyperos_texture_corner),
                                     onClick = {
                                         showCornerDialog.value = true
                                     },
                                     holdDownState = showCornerDialog.value
                                 )
-                                SuperArrow(
+                                ArrowPreference(
                                     title = stringResource(R.string.hyperos_texture_color),
                                     onClick = {
                                         showBgColorDialog.value = true
@@ -284,10 +268,10 @@ fun SystemSpecialPage(
 @Composable
 fun RadioDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.mHyperOSTextureRadio.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.hyperos_texture_radio),
         summary = stringResource(R.string.lyric_stroke_width_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -327,10 +311,10 @@ fun RadioDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun CornerDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.mHyperOSTextureCorner.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.hyperos_texture_corner),
         summary = stringResource(R.string.lyric_letter_spacing_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -370,17 +354,17 @@ fun CornerDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun BgColorDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.mHyperOSTextureBgColor) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.hyperos_texture_color),
         summary = stringResource(R.string.lyric_color_and_transparency_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
             modifier = Modifier.padding(bottom = 16.dp),
             value = value.value,
             maxLines = 1,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
             onValueChange = { value.value = it }
         )
         Row(

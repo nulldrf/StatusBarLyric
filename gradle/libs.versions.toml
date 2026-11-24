@@ -1,32 +1,39 @@
 [versions]
-android-gradle-plugin = "8.10.0"
-androidx-core-kit = "1.16.0"
-androidx-activity-compose = "1.10.1"
-androidx-compose-foundation = "1.8.1"
-androidx-navigation-compose = "2.9.0"
-ezXHelper = "2.2.1"
-haze = "1.5.4"
-kotlin = "2.1.20"
-miuix = "0.4.3"
-super-lyric-api = "1.7"
-xposed = "82"
+android-gradle-plugin = "9.5.2"
+androidx-core-ktx = "1.19.1"
+androidx-activity-compose = "1.13.0"
+androidx-compose = "1.13.0"
+ezxhelper = "3.2.0-preview1"
+kotlin = "2.4.21"
+kotlinx-serialization = "1.11.0"
+libxposed-api = "101.0.1"
+libxposed-service = "101.0.0"
+miuix = "0.9.4"
+super-lyric-api = "4.0"
 
 [libraries]
-androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "androidx-compose-foundation" }
-androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core-kit" }
+androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "androidx-compose" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core-ktx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "androidx-activity-compose" }
-androidx-ui = { group = "androidx.compose.ui", name = "ui" }
-androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
-androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
-androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
-androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "androidx-navigation-compose" }
-ezXHelper = { module = "com.github.kyuubiran:EzXHelper", version.ref = "ezXHelper" }
-haze = { module = "dev.chrisbanes.haze:haze", version.ref = "haze" }
-miuix = { module = "top.yukonga.miuix.kmp:miuix-android", version.ref = "miuix" }
+androidx-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "androidx-compose" }
+androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics", version.ref = "androidx-compose" }
+androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling", version.ref = "androidx-compose" }
+androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview", version.ref = "androidx-compose" }
+kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "kotlinx-serialization" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+ezxhelper-core = { module = "io.github.kyuubiran.ezxhelper:core", version.ref = "ezxhelper" }
+ezxhelper-xposed-api = { module = "io.github.kyuubiran.ezxhelper:xposed-api-101", version.ref = "ezxhelper" }
+ezxhelper-android-utils = { module = "io.github.kyuubiran.ezxhelper:android-utils", version.ref = "ezxhelper" }
+libxposed-api = { module = "io.github.libxposed:api", version.ref = "libxposed-api" }
+libxposed-service = { module = "io.github.libxposed:service", version.ref = "libxposed-service" }
+miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui", version.ref = "miuix" }
+miuix-preference = { module = "top.yukonga.miuix.kmp:miuix-preference", version.ref = "miuix" }
+miuix-icons = { module = "top.yukonga.miuix.kmp:miuix-icons", version.ref = "miuix" }
+miuix-blur = { module = "top.yukonga.miuix.kmp:miuix-blur", version.ref = "miuix" }
+miuix-nav = { module = "top.yukonga.miuix.kmp:miuix-nav", version.ref = "miuix" }
 superlyricapi = { module = "com.github.HChenX:SuperLyricApi", version.ref = "super-lyric-api" }
-xposed = { module = "de.robv.android.xposed:api", version.ref = "xposed" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "android-gradle-plugin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

@@ -24,60 +24,87 @@ package statusbar.lyric.tools
 
 import android.annotation.SuppressLint
 import android.content.SharedPreferences
-import de.robv.android.xposed.XSharedPreferences
+import statusbar.lyric.XposedApp
+import statusbar.lyric.config.Config.Companion.CONFIG_NAME
 import statusbar.lyric.tools.Tools.isNull
 
-class ConfigTools {
-    private var xSP: XSharedPreferences? = null
-    private var mSP: SharedPreferences? = null
-    private var mSPEditor: SharedPreferences.Editor? = null
+@SuppressLint("CommitPrefEdits")
+class ConfigTools(
+    sharedPreferences: SharedPreferences?,
+    private val readOnly: Boolean = false
+) {
+    private var mSP: SharedPreferences? = sharedPreferences
 
-    constructor(xSharedPreferences: XSharedPreferences?) {
-        xSP = xSharedPreferences
-        mSP = xSharedPreferences
-    }
-
-    @SuppressLint("CommitPrefEdits")
-    constructor(sharedPreferences: SharedPreferences) {
-        mSP = sharedPreferences
-        mSPEditor = sharedPreferences.edit()
+    private fun resolveSP(): SharedPreferences? {
+        if (readOnly) {
+            val latest = Tools.getPref(CONFIG_NAME)
+            if (latest != null) {
+                mSP = latest
+            }
+        }
+        return mSP
     }
 
     fun reload() {
-        xSP.isNull {
-            xSP = Tools.getPref("Lyric_Config")
-            mSP = xSP
-            return
-        }
-        xSP?.reload()
+        resolveSP()
     }
 
     fun put(key: String?, any: Any) {
+        if (readOnly || key == null) return
+        val editor = mSP?.edit() ?: return
         when (any) {
-            is Int -> mSPEditor?.putInt(key, any)
-            is String -> mSPEditor?.putString(key, any)
-            is Boolean -> mSPEditor?.putBoolean(key, any)
-            is Float -> mSPEditor?.putFloat(key, any)
+            is Int -> editor.putInt(key, any)
+            is String -> editor.putString(key, any)
+            is Boolean -> editor.putBoolean(key, any)
+            is Float -> editor.putFloat(key, any)
+            is Long -> editor.putLong(key, any)
         }
-        mSPEditor?.apply()
+        editor.commit()
+        XposedApp.syncPreference(CONFIG_NAME, key, any)
     }
 
     @Suppress("UNCHECKED_CAST")
     fun <T> opt(key: String, defValue: T): T {
-        mSP.isNull {
+        val sp = resolveSP()
+        sp.isNull {
             return defValue
         }
-        return when (defValue) {
-            is String -> mSP!!.getString(key, defValue.toString()) as T
-            is Int -> mSP!!.getInt(key, defValue) as T
-            is Boolean -> mSP!!.getBoolean(key, defValue) as T
-            is Double -> mSP!!.getFloat(key, defValue.toFloat()) as T
-            is Float -> mSP!!.getFloat(key, defValue) as T
-            else -> "" as T
+        return try {
+            when (defValue) {
+                is String -> (sp!!.getString(key, defValue) ?: defValue) as T
+                is Int -> sp!!.getInt(key, defValue) as T
+                is Boolean -> sp!!.getBoolean(key, defValue) as T
+                is Long -> sp!!.getLong(key, defValue) as T
+                is Double -> sp!!.getFloat(key, defValue.toFloat()).toDouble() as T
+                is Float -> {
+                    try {
+                        sp!!.getFloat(key, defValue) as T
+                    } catch (_: ClassCastException) {
+                        val raw = sp!!.all[key]
+                        when (raw) {
+                            is Number -> raw.toFloat() as T
+                            is String -> {
+                                val parsed = if (raw.startsWith("Float:")) {
+                                    raw.substring(6).toFloatOrNull()?.div(1000f)
+                                } else {
+                                    raw.toFloatOrNull()
+                                }
+                                (parsed ?: defValue) as T
+                            }
+                            else -> defValue
+                        }
+                    }
+                }
+                else -> defValue
+            }
+        } catch (_: Throwable) {
+            defValue
         }
     }
 
     fun clearConfig() {
-        mSPEditor?.clear()?.apply()
+        if (readOnly) return
+        mSP?.edit()?.clear()?.commit()
+        XposedApp.clearRemotePreferences(CONFIG_NAME)
     }
 }

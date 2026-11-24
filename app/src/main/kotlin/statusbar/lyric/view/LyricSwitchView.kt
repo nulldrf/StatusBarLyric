@@ -59,7 +59,7 @@ open class LyricSwitchView(context: Context) : TextSwitcher(context) {
         applyToAllViews { it.setTextColor(color) }
     }
 
-    fun setLinearGradient(shader: Shader) {
+    fun setLinearGradient(shader: Shader?) {
         applyToAllViews { it.setLinearGradient(shader) }
     }
 
@@ -69,6 +69,19 @@ open class LyricSwitchView(context: Context) : TextSwitcher(context) {
 
     fun setScrollSpeed(speed: Float) {
         applyToAllViews { it.setScrollSpeed(speed) }
+    }
+
+    fun setScrollPlan(plan: statusbar.lyric.tools.LyricScrollPlan) {
+        applyToAllViews { it.setScrollPlan(plan) }
+    }
+
+    fun syncPlaybackPosition(positionMs: Long, playbackSpeed: Float) {
+        (currentView as? LyricTextView)?.syncPlaybackPosition(positionMs, playbackSpeed)
+    }
+
+    fun measureTextWidth(text: CharSequence): Float {
+        val active = (currentView as? LyricTextView) ?: (getChildAt(0) as? LyricTextView)
+        return active?.measureTextWidth(text) ?: 0f
     }
 
     fun setLetterSpacings(letterSpacing: Float) {

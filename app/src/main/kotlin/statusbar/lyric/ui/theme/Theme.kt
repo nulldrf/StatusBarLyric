@@ -22,19 +22,19 @@
 
 package statusbar.lyric.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.theme.darkColorScheme
-import top.yukonga.miuix.kmp.theme.lightColorScheme
+import top.yukonga.miuix.kmp.theme.ThemeController
 
 @Composable
 fun AppTheme(
     content: @Composable () -> Unit
 ) {
+    val controller = remember { ThemeController(ColorSchemeMode.System) }
     MiuixTheme(
-        colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
-    ) {
-        content()
-    }
+        controller = controller,
+        content = content
+    )
 }

@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -53,15 +54,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
-import androidx.navigation.NavController
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
+import statusbar.lyric.AppNavigator
+import statusbar.lyric.BlurredTopBar
 import statusbar.lyric.R
 import statusbar.lyric.config.ActivityOwnSP.config
+import statusbar.lyric.rememberBlurBackdrop
 import statusbar.lyric.tools.ActivityTools
 import statusbar.lyric.tools.ActivityTools.changeConfig
 import statusbar.lyric.tools.Tools.isNotNull
@@ -74,23 +71,25 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
-import top.yukonga.miuix.kmp.extra.SuperArrow
-import top.yukonga.miuix.kmp.extra.SuperDialog
-import top.yukonga.miuix.kmp.extra.SuperDropdown
-import top.yukonga.miuix.kmp.extra.SuperSwitch
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.icons.useful.Back
+import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.getWindowSize
 import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 @Composable
 fun LyricPage(
-    navController: NavController
+    navigator: AppNavigator
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val lyricWidth = remember { mutableStateOf(config.lyricWidth.toString()) }
@@ -134,57 +133,44 @@ fun LyricPage(
     val showLyricStartMarginsDialog = remember { mutableStateOf(false) }
     val showLyricEndMarginsDialog = remember { mutableStateOf(false) }
     val showLyricAnimDurationDialog = remember { mutableStateOf(false) }
-
-    val hazeState = remember { HazeState() }
-    val hazeStyle = HazeStyle(
-        backgroundColor = MiuixTheme.colorScheme.background,
-        tint = HazeTint(
-            MiuixTheme.colorScheme.background.copy(
-                if (scrollBehavior.state.collapsedFraction <= 0f) 1f
-                else lerp(1f, 0.67f, (scrollBehavior.state.collapsedFraction))
-            )
-        )
-    )
+    val backdrop = rememberBlurBackdrop()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                color = Color.Transparent,
-                modifier = Modifier
-                    .hazeEffect(hazeState) {
-                        style = hazeStyle
-                        blurRadius = 25.dp
-                        noiseFactor = 0f
-                    }
-                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
-                    .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
-                    .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
-                title = stringResource(R.string.lyric_page),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(
-                        modifier = Modifier.padding(start = 20.dp),
-                        onClick = {
-                            navController.popBackStack()
+            BlurredTopBar(backdrop = backdrop, scrollBehavior = scrollBehavior) {
+                TopAppBar(
+                    color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Right))
+                        .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                        .windowInsetsPadding(WindowInsets.captionBar.only(WindowInsetsSides.Top)),
+                    title = stringResource(R.string.lyric_page),
+                    scrollBehavior = scrollBehavior,
+                    navigationIcon = {
+                        IconButton(
+                            modifier = Modifier.padding(start = 20.dp),
+                            onClick = {
+                                navigator.popBackStack()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = "Back",
+                                tint = MiuixTheme.colorScheme.onBackground
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Useful.Back,
-                            contentDescription = "Back",
-                            tint = MiuixTheme.colorScheme.onBackground
-                        )
-                    }
-                },
-                defaultWindowInsetsPadding = false
-            )
-        },
-        popupHost = { null }
+                    },
+                    defaultWindowInsetsPadding = false
+                )
+            }
+        }
     ) {
         LazyColumn(
             modifier = Modifier
-                .hazeSource(state = hazeState)
-                .height(getWindowSize().height.dp)
+                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                .fillMaxHeight()
+                .scrollEndHaptic()
                 .overScrollVertical()
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Right))
@@ -203,7 +189,7 @@ fun LyricPage(
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 6.dp)
                     ) {
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_width),
                             onClick = {
                                 showLyricWidthDialog.value = true
@@ -213,7 +199,7 @@ fun LyricPage(
                         AnimatedVisibility(
                             visible = lyricWidth.value != "0",
                         ) {
-                            SuperSwitch(
+                            SwitchPreference(
                                 title = stringResource(R.string.fixed_lyric_width),
                                 summary = stringResource(R.string.fixed_lyric_width_tips),
                                 checked = fixedLyricWidth.value,
@@ -224,60 +210,66 @@ fun LyricPage(
                                 }
                             )
                         }
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_size),
                             onClick = {
                                 showLyricSizeDialog.value = true
                             },
                             holdDownState = showLyricSizeDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_color_and_transparency),
                             onClick = {
                                 showLyricColorDialog.value = true
                             },
                             holdDownState = showLyricColorDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyrics_are_gradient_and_transparent),
                             titleColor = BasicComponentDefaults.titleColor(
                                 color = MiuixTheme.colorScheme.primary
                             ),
-                            rightText = stringResource(R.string.tips1),
+                            endActions = {
+                                Text(
+                                    text = stringResource(R.string.tips1),
+                                    fontSize = MiuixTheme.textStyles.body2.fontSize,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantActions
+                                )
+                            },
                             onClick = {
                                 showLyricGradientDialog.value = true
                             },
                             holdDownState = showLyricGradientDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyrics_gradient_background_color_and_transparency),
                             onClick = {
                                 showLyricGradientBgColorDialog.value = true
                             },
                             holdDownState = showLyricGradientBgColorDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_background_radius),
                             onClick = {
                                 showLyricBgRadiusDialog.value = true
                             },
                             holdDownState = showLyricBgRadiusDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_letter_spacing),
                             onClick = {
                                 showLyricLetterSpacingDialog.value = true
                             },
                             holdDownState = showLyricLetterSpacingDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_stroke_width),
                             onClick = {
                                 showLyricStrokeWidthDialog.value = true
                             },
                             holdDownState = showLyricStrokeWidthDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_speed),
                             onClick = {
                                 showLyricSpeedDialog.value = true
@@ -295,28 +287,28 @@ fun LyricPage(
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 6.dp)
                     ) {
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_top_margins),
                             onClick = {
                                 showLyricTopMarginsDialog.value = true
                             },
                             holdDownState = showLyricTopMarginsDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_bottom_margins),
                             onClick = {
                                 showLyricBottomMarginsDialog.value = true
                             },
                             holdDownState = showLyricBottomMarginsDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_start_margins),
                             onClick = {
                                 showLyricStartMarginsDialog.value = true
                             },
                             holdDownState = showLyricStartMarginsDialog.value
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyric_end_margins),
                             onClick = {
                                 showLyricEndMarginsDialog.value = true
@@ -334,7 +326,7 @@ fun LyricPage(
                             .padding(horizontal = 12.dp)
                             .padding(bottom = 6.dp)
                     ) {
-                        SuperDropdown(
+                        OverlayDropdownPreference(
                             title = stringResource(R.string.lyrics_animation),
                             items = lyricAnimOptions,
                             selectedIndex = lyricAnimSelectedOption.intValue,
@@ -344,7 +336,7 @@ fun LyricPage(
                                 changeConfig()
                             },
                         )
-                        SuperDropdown(
+                        OverlayDropdownPreference(
                             title = stringResource(R.string.lyrics_animation_interpolator),
                             items = lyricInterpolatorOptions,
                             selectedIndex = lyricInterpolatorSelectedOption.intValue,
@@ -354,7 +346,7 @@ fun LyricPage(
                                 changeConfig()
                             },
                         )
-                        SuperArrow(
+                        ArrowPreference(
                             title = stringResource(R.string.lyrics_animation_duration),
                             onClick = {
                                 showLyricAnimDurationDialog.value = true
@@ -407,10 +399,10 @@ fun LyricPage(
 
 @Composable
 fun LyricWidthDialog(showDialog: MutableState<Boolean>, lyricWidth: MutableState<String>) {
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_width),
         summary = stringResource(R.string.lyric_width_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -451,10 +443,10 @@ fun LyricWidthDialog(showDialog: MutableState<Boolean>, lyricWidth: MutableState
 @Composable
 fun LyricSizeDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricSize.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_size),
         summary = stringResource(R.string.lyric_size_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -497,10 +489,10 @@ fun LyricSizeDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricColorDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricColor) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_color_and_transparency),
         summary = stringResource(R.string.lyric_color_and_transparency_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -537,10 +529,10 @@ fun LyricColorDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricGradientDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricGradientColor) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyrics_are_gradient_and_transparent),
         summary = stringResource(R.string.lyrics_are_gradient_and_transparent_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -569,6 +561,7 @@ fun LyricGradientDialog(showDialog: MutableState<Boolean>) {
                 onClick = {
                     ActivityTools.colorSCheck(value.value, unit = { config.lyricGradientColor = it })
                     showDialog.value = false
+                    changeConfig()
                 }
             )
         }
@@ -578,10 +571,10 @@ fun LyricGradientDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricGradientBgColorDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricBackgroundColor) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyrics_gradient_background_color_and_transparency),
         summary = stringResource(R.string.lyrics_gradient_background_color_and_transparency_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -618,10 +611,10 @@ fun LyricGradientBgColorDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricBgRadiusDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricBackgroundRadius.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_background_radius),
         summary = stringResource(R.string.lyric_background_radius_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -661,10 +654,10 @@ fun LyricBgRadiusDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricLetterSpacingDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricLetterSpacing.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_letter_spacing),
         summary = stringResource(R.string.lyric_letter_spacing_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -704,10 +697,10 @@ fun LyricLetterSpacingDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricStrokeWidthDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricStrokeWidth.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_stroke_width),
         summary = stringResource(R.string.lyric_stroke_width_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = {
             showDialog.value = false
         },
@@ -751,10 +744,10 @@ fun LyricStrokeWidthDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricSpeedDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricSpeed.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_speed),
         summary = stringResource(R.string.lyric_speed_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -794,10 +787,10 @@ fun LyricSpeedDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricTopMarginsDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricTopMargins.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_top_margins),
         summary = stringResource(R.string.lyric_top_margins_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -837,10 +830,10 @@ fun LyricTopMarginsDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricBottomMarginsDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricBottomMargins.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_bottom_margins),
         summary = stringResource(R.string.lyric_bottom_margins_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -880,10 +873,10 @@ fun LyricBottomMarginsDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricStartMarginsDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricStartMargins.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_start_margins),
         summary = stringResource(R.string.lyric_start_margins_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -925,10 +918,10 @@ fun LyricStartMarginsDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricEndMarginsDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.lyricEndMargins.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyric_end_margins),
         summary = stringResource(R.string.lyric_end_margins_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
@@ -970,10 +963,10 @@ fun LyricEndMarginsDialog(showDialog: MutableState<Boolean>) {
 @Composable
 fun LyricAnimDurationDialog(showDialog: MutableState<Boolean>) {
     val value = remember { mutableStateOf(config.animationDuration.toString()) }
-    SuperDialog(
+    OverlayDialog(
         title = stringResource(R.string.lyrics_animation_duration),
         summary = stringResource(R.string.lyric_animation_duration_tips),
-        show = showDialog,
+        show = showDialog.value,
         onDismissRequest = { showDialog.value = false },
     ) {
         TextField(
