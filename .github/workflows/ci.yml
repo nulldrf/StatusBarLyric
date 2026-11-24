@@ -28,9 +28,6 @@ on:
   workflow_dispatch:
   workflow_call:
 
-env:
-  PUBLISH_NIGHTLY: true
-
 jobs:
   build-debug-apk:
     strategy:
@@ -60,8 +57,6 @@ jobs:
       - build-debug-apk
     runs-on: ubuntu-slim
     if: always()
-    outputs:
-      publish_nightly: ${{ steps.publishing-status.outputs.publish_nightly }}
     steps:
       - name: Check
         run: |
@@ -71,28 +66,3 @@ jobs:
             exit 1
           fi
           echo "All required jobs completed successfully."
-      - id: publishing-status
-        run: echo "publish_nightly=${{ env.PUBLISH_NIGHTLY }}" >> "$GITHUB_OUTPUT"
-
-  nightly-release:
-    runs-on: ubuntu-latest
-    needs: final-status
-    if: needs.final-status.outputs.publish_nightly == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || endsWith(github.ref, '-dev'))
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: assembleRelease
-      # Note the # and () symbols are not supported in GitHub Release filenames, even manually
-      - name: Export APK_NAME for later use
-        run: echo "APK_NAME=StatusBarLyric.${{ github.ref_name }}.Nightly-CI_${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7).apk" >> $GITHUB_ENV
-      - name: Rename .apk file
-        run: mv ./release/*.apk "./$APK_NAME" || mv ./*.apk "./$APK_NAME"
-      - name: Delete release if exist then create release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view "nightly" && gh release delete "nightly" -y --cleanup-tag || true
-          gh release create "nightly" "./$APK_NAME" -p -t "StatusBarLyric Nightly" --generate-notes
