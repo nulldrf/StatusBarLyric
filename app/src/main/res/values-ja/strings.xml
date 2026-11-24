@@ -113,7 +113,8 @@
     <string name="color_scheme2">カラースキーム 2</string>
     <string name="lyric_color_scheme">歌詞のカラースキーム</string>
     <string name="tips1">再起動が必要です</string>
-    <string name="dynamic_lyric_speed">動的スクロール速度 (Beta)</string>
+    <string name="dynamic_lyric_speed">動的スクロール速度</string>
+    <string name="dynamic_lyric_speed_tips">再生速度、単語・行のタイミング、曲のテンポ、歌詞の幅やフォント設定に合わせてスクロール速度を自動調整します</string>
     <string name="click_status_bar_to_hide_lyric">ステータスバーをタップして歌詞を非表示</string>
     <string name="long_click_status_bar_stop">ステータスバーを長押しして再生／一時停止</string>
     <string name="system_special_page">システム固有の設定</string>

@@ -113,7 +113,8 @@
     <string name="color_scheme2">方案 2</string>
     <string name="lyric_color_scheme">歌詞反色方案</string>
     <string name="tips1">需重啟</string>
-    <string name="dynamic_lyric_speed">動態歌詞速度 (Beta)</string>
+    <string name="dynamic_lyric_speed">動態歌詞速度</string>
+    <string name="dynamic_lyric_speed_tips">根據播放速度、逐字/逐句時長、歌曲節奏以及歌詞寬度與字體等設定自動匹配捲動速度</string>
     <string name="click_status_bar_to_hide_lyric">點擊狀態列隱藏歌詞</string>
     <string name="long_click_status_bar_stop">長按狀態列暫停/播放</string>
     <string name="system_special_page">系統專屬設定</string>

@@ -113,7 +113,8 @@
     <string name="color_scheme2">方案 2</string>
     <string name="lyric_color_scheme">歌词反色方案</string>
     <string name="tips1">需重启</string>
-    <string name="dynamic_lyric_speed">动态歌词速度 (Beta)</string>
+    <string name="dynamic_lyric_speed">动态歌词速度</string>
+    <string name="dynamic_lyric_speed_tips">根据播放速度、逐字/逐句时长、歌曲节奏以及歌词宽度和字体等设置自动匹配滚动速度</string>
     <string name="click_status_bar_to_hide_lyric">点击状态栏隐藏歌词</string>
     <string name="long_click_status_bar_stop">长按状态栏暂停/播放</string>
     <string name="system_special_page">系统专属设置</string>

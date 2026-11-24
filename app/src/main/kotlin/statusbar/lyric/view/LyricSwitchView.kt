@@ -71,6 +71,19 @@ open class LyricSwitchView(context: Context) : TextSwitcher(context) {
         applyToAllViews { it.setScrollSpeed(speed) }
     }
 
+    fun setScrollPlan(plan: statusbar.lyric.tools.LyricScrollPlan) {
+        applyToAllViews { it.setScrollPlan(plan) }
+    }
+
+    fun syncPlaybackPosition(positionMs: Long, playbackSpeed: Float) {
+        (currentView as? LyricTextView)?.syncPlaybackPosition(positionMs, playbackSpeed)
+    }
+
+    fun measureTextWidth(text: CharSequence): Float {
+        val active = (currentView as? LyricTextView) ?: (getChildAt(0) as? LyricTextView)
+        return active?.measureTextWidth(text) ?: 0f
+    }
+
     fun setLetterSpacings(letterSpacing: Float) {
         applyToAllViews { it.letterSpacing = letterSpacing }
     }

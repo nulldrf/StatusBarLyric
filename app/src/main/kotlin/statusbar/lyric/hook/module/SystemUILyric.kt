@@ -49,6 +49,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Message
 import android.os.Parcel
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Gravity
@@ -81,11 +82,14 @@ import statusbar.lyric.hook.module.xiaomi.XiaomiHooks
 import statusbar.lyric.tools.BlurTools.cornerRadius
 import statusbar.lyric.tools.BlurTools.setBackgroundBlur
 import statusbar.lyric.tools.LogTools.log
+import statusbar.lyric.tools.LyricScrollPlan
+import statusbar.lyric.tools.LyricTempoTracker
 import statusbar.lyric.tools.LyricViewTools
 import statusbar.lyric.tools.LyricViewTools.cancelAnimation
 import statusbar.lyric.tools.LyricViewTools.hideView
 import statusbar.lyric.tools.LyricViewTools.randomAnima
 import statusbar.lyric.tools.LyricViewTools.showView
+import statusbar.lyric.tools.WordTiming
 import statusbar.lyric.tools.Tools.base64ToBitmap
 import statusbar.lyric.tools.Tools.callMethod
 import statusbar.lyric.tools.Tools.existField
@@ -701,12 +705,31 @@ class SystemUILyric : BaseHook() {
         this@SystemUILyric.title = value.title
     }
 
+    private data class LyricTimingContext(
+        val songKey: String = "",
+        val playbackSpeed: Float = 1.0f,
+        val positionMs: Long = 0L,
+        val lineIndex: Int = -1,
+        val lineStartMs: Long = 0L,
+        val lineEndMs: Long = 0L,
+        val nextLineStartMs: Long = 0L,
+        val songDurationMs: Long = 0L,
+        val legacyDelayMs: Int = 0,
+        val words: List<WordTiming> = emptyList(),
+        val receivedWallMs: Long = 0L
+    )
+
+    private val tempoTracker = LyricTempoTracker()
+    private var lastTimingContext = LyricTimingContext()
+
     private fun handleStopEvent(packageName: String) {
         if (playingApp.isNotEmpty() && packageName.isNotEmpty() && playingApp != packageName) return
 
         lastLyric = ""
         playingApp = ""
         isMusicPlaying = false
+        tempoTracker.reset()
+        lastTimingContext = LyricTimingContext()
         if (lastRunnable.isNotNull()) handler.removeCallbacks(lastRunnable!!)
         lastRunnable = null
         if (handler.hasMessages(timeoutRestore)) handler.removeMessages(timeoutRestore)
@@ -722,7 +745,8 @@ class SystemUILyric : BaseHook() {
         title: String,
         artist: String,
         album: String,
-        base64Icon: String
+        base64Icon: String,
+        timing: LyricTimingContext? = null
     ) {
         if (packageName.isNotEmpty()) {
             playingApp = packageName
@@ -744,6 +768,12 @@ class SystemUILyric : BaseHook() {
         if (lyric.isEmpty()) return
         isMusicPlaying = true
         lastLyric = lyric
+        val songKey = "${playingApp}|${title}|${artist}"
+        lastTimingContext = timing ?: LyricTimingContext(
+            songKey = songKey,
+            legacyDelayMs = delay,
+            receivedWallMs = SystemClock.elapsedRealtime()
+        )
         if (!isReady) return
 
         if (lastRunnable.isNotNull()) {
@@ -772,17 +802,62 @@ class SystemUILyric : BaseHook() {
         val doc = view.lyric
         val line = view.line ?: doc.lines.firstOrNull()
         val lyricText = line?.text.orEmpty().ifEmpty { doc.title }
-        val delayMs = if (line != null && line.end > line.start) (line.end - line.start).toInt() else 0
+        val lineStart = line?.start ?: 0L
+        val lineEnd = line?.end ?: 0L
+        val nextLineStart = view.upcoming.firstOrNull()?.start ?: 0L
+        val words = line?.words?.map { WordTiming(it.text, it.start, it.end) }.orEmpty()
+        val delayMs = if (lineEnd > lineStart) (lineEnd - lineStart).toInt() else 0
         val hasMeta = doc.title.isNotEmpty() || doc.artist.isNotEmpty() || doc.album.isNotEmpty()
+        val publisher = view.publisher.orEmpty()
+        val songKey = "$publisher|${doc.id.ifEmpty { "${doc.title}|${doc.artist}" }}"
+
+        // Mid-line playback speed or position sync for the exact same displayed line:
+        // smoothly adjust scrolling without re-triggering the TextSwitcher animation.
+        val isSameLineSync = isReady && !isHiding && isMusicPlaying &&
+            lyricText.isNotEmpty() && lyricText == lastLyric &&
+            lineStart > 0L && lineStart == lastTimingContext.lineStartMs &&
+            view.index == lastTimingContext.lineIndex
+        if (isSameLineSync) {
+            lastTimingContext = lastTimingContext.copy(
+                playbackSpeed = view.speed,
+                positionMs = view.position
+            )
+            if (config.dynamicLyricSpeed) {
+                goMainThread {
+                    lyricView.syncPlaybackPosition(view.position, view.speed)
+                }
+            }
+            val timeoutMs = maxOf(15000L, delayMs.toLong() + 5000L)
+            if (handler.hasMessages(timeoutRestore)) {
+                handler.removeMessages(timeoutRestore)
+            }
+            handler.sendEmptyMessageDelayed(timeoutRestore, timeoutMs)
+            return
+        }
+
+        val timing = LyricTimingContext(
+            songKey = songKey,
+            playbackSpeed = view.speed,
+            positionMs = view.position,
+            lineIndex = view.index,
+            lineStartMs = lineStart,
+            lineEndMs = lineEnd,
+            nextLineStartMs = nextLineStart,
+            songDurationMs = doc.duration,
+            legacyDelayMs = delayMs,
+            words = words,
+            receivedWallMs = SystemClock.elapsedRealtime()
+        )
         handleLyricEvent(
-            packageName = view.publisher.orEmpty(),
+            packageName = publisher,
             lyric = lyricText,
             delay = delayMs,
             hasMetadata = hasMeta,
             title = doc.title,
             artist = doc.artist,
             album = doc.album,
-            base64Icon = ""
+            base64Icon = "",
+            timing = timing
         )
     }
 
@@ -977,25 +1052,36 @@ class SystemUILyric : BaseHook() {
             lyricView.apply {
                 val lyricWidth = getLyricWidth(lyric)
                 width = lyricWidth
-                val i = theoreticalWidth - lyricWidth
-                "Lyric width: $lyricWidth, Theoretical width: $theoreticalWidth, i: $i".log()
-                if (i > 0 && lyricWidth > 0) {
-                    if (delay > 0) {
-                        val durationInSeconds = delay / 1000f
-                        if (durationInSeconds > 0) {
-                            val speed = 0.3f + (i.toFloat() / lyricWidth) * (5f / durationInSeconds)
-                            val boundedSpeed = speed.coerceIn(0.3f, 5.0f)
-                            setScrollSpeed(boundedSpeed)
-                            "Delay mode - Duration: ${durationInSeconds}, Speed: $boundedSpeed".log()
-                        }
-                    } else if (config.dynamicLyricSpeed) {
-                        val proportion = i.toFloat() / lyricWidth
-                        val speed = 10 * proportion + 0.7f
-                        setScrollSpeed(speed)
-                        "Dynamic mode - Proportion: $proportion, Speed: $speed".log()
-                    }
+                val overflow = theoreticalWidth - lyricWidth
+                "Lyric width: $lyricWidth, Theoretical width: $theoreticalWidth, overflow: $overflow".log()
+                if (config.dynamicLyricSpeed) {
+                    val plan = tempoTracker.buildDynamicPlan(
+                        songKey = lastTimingContext.songKey,
+                        lyricText = lyric,
+                        nowWallMs = lastTimingContext.receivedWallMs.takeIf { it > 0L }
+                            ?: SystemClock.elapsedRealtime(),
+                        playbackSpeedRaw = lastTimingContext.playbackSpeed,
+                        positionMs = lastTimingContext.positionMs,
+                        lineStartMs = lastTimingContext.lineStartMs,
+                        lineEndMs = lastTimingContext.lineEndMs,
+                        nextLineStartMs = lastTimingContext.nextLineStartMs,
+                        songDurationMs = lastTimingContext.songDurationMs,
+                        legacyDelayMs = if (delay > 0) delay else lastTimingContext.legacyDelayMs,
+                        words = lastTimingContext.words,
+                        animationDurationMs = config.animationDuration.toLong(),
+                        targetWidthPx = lyricWidth
+                    )
+                    setScrollPlan(plan)
+                    "Dynamic scroll plan: durationWallMs=${plan.durationWallMs}, speed=${plan.playbackSpeed}, words=${plan.words.size}, width=$lyricWidth".log()
                 } else {
-                    setScrollSpeed(config.lyricSpeed.toFloat())
+                    val speedPxPerSec = config.lyricSpeed.coerceAtLeast(1) * 60f
+                    setScrollPlan(
+                        LyricScrollPlan.Fixed(
+                            speedPxPerSec = speedPxPerSec,
+                            leadHoldMs = config.animationDuration.toLong() + 450L,
+                            targetWidthPx = lyricWidth
+                        )
+                    )
                 }
                 if (isRandomAnima) {
                     val animation = randomAnima
@@ -1185,16 +1271,21 @@ class SystemUILyric : BaseHook() {
 
     private fun getLyricWidth(lyric: String): Int {
         "Getting Lyric Width".log()
-        val textView = TextView(context).apply {
-            setTextSize(
-                TypedValue.COMPLEX_UNIT_SHIFT,
-                if (config.lyricSize == 0) clockView.textSize else config.lyricSize.toFloat()
-            )
-            setTypeface(clockView.typeface)
-            letterSpacing = config.lyricLetterSpacing / 100f
-            paint.strokeWidth = config.lyricStrokeWidth / 100f
+        val measured = kotlin.math.ceil(lyricView.measureTextWidth(lyric)).toInt()
+        val textWidth = if (measured > 0) {
+            measured
+        } else {
+            val textView = TextView(context).apply {
+                setTextSize(
+                    TypedValue.COMPLEX_UNIT_SHIFT,
+                    if (config.lyricSize == 0) clockView.textSize else config.lyricSize.toFloat()
+                )
+                setTypeface(clockView.typeface)
+                letterSpacing = config.lyricLetterSpacing / 100f
+                paint.strokeWidth = config.lyricStrokeWidth / 100f
+            }
+            kotlin.math.ceil(textView.paint.measureText(lyric)).toInt()
         }
-        val textWidth = textView.paint.measureText(lyric).toInt()
         theoreticalWidth = textWidth
         return if (config.lyricWidth == 0) {
             val availableWidth = targetView.width - config.lyricStartMargins - config.lyricEndMargins

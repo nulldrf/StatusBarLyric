@@ -114,7 +114,8 @@
     <string name="color_scheme2">Color Scheme 2</string>
     <string name="lyric_color_scheme">Lyric Color Scheme</string>
     <string name="tips1">Restart required</string>
-    <string name="dynamic_lyric_speed">Dynamic Lyric Speed (Beta)</string>
+    <string name="dynamic_lyric_speed">Dynamic Lyric Speed</string>
+    <string name="dynamic_lyric_speed_tips">Automatically adapts scroll speed to playback speed, word and line timing, song tempo, and your lyric width and font settings</string>
     <string name="click_status_bar_to_hide_lyric">Tap Status Bar to Hide Lyrics</string>
     <string name="long_click_status_bar_stop">Long-Press Status Bar to Pause/Play</string>
     <string name="system_special_page">System-Specific Options</string>

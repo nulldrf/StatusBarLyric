@@ -278,10 +278,12 @@ fun ExtendPage(
                         )
                         SwitchPreference(
                             title = stringResource(R.string.dynamic_lyric_speed),
+                            summary = stringResource(R.string.dynamic_lyric_speed_tips),
                             checked = dynamicLyricSpeed.value,
                             onCheckedChange = {
                                 dynamicLyricSpeed.value = it
                                 config.dynamicLyricSpeed = it
+                                ActivityTools.changeConfig()
                             }
                         )
                     }
