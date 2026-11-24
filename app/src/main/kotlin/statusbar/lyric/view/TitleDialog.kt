@@ -107,7 +107,9 @@ class TitleDialog(context: Context) : Dialog(context) {
                     height = dp2px(context, 15f)
                     setMargins(0, 0, 15, 0)
                 }
-            setImageDrawable(EzXposed.moduleRes.getDrawable(R.drawable.ic_song, null))
+            runCatching {
+                setImageDrawable(EzXposed.moduleRes.getDrawable(R.drawable.ic_song, null))
+            }
         }
     }
     private var content: LinearLayout = LinearLayout(context).apply {
@@ -117,10 +119,10 @@ class TitleDialog(context: Context) : Dialog(context) {
         gravity = Gravity.CENTER
         background = GradientDrawable().apply {
             cornerRadius = config.titleBackgroundRadius.toFloat()
-            setColor(config.titleColorAndTransparency.toColorInt())
+            setColor(runCatching { config.titleColorAndTransparency.trim().toColorInt() }.getOrDefault(Color.BLACK))
             setStroke(
                 config.titleBackgroundStrokeWidth,
-                config.titleBackgroundStrokeColorAndTransparency.toColorInt()
+                runCatching { config.titleBackgroundStrokeColorAndTransparency.trim().toColorInt() }.getOrDefault(Color.WHITE)
             )
         }
         setPadding(40, 5, 40, 5)
@@ -159,18 +161,20 @@ class TitleDialog(context: Context) : Dialog(context) {
             }
             attributes = params
         }
-        show()
+        runCatching { show() }
     }
 
     fun delayedHide() {
-        if (DELAY_DURATION == 0L) return
+        val delayDuration = config.titleDelayDuration.toLong()
+        if (delayDuration <= 0L) return
         handler.removeCallbacks(runnable)
-        handler.postDelayed(runnable, DELAY_DURATION)
+        handler.postDelayed(runnable, delayDuration)
     }
 
     fun showTitle(title: String) {
+        isStop = false
         setTitle(title)
-        if (root.isVisible) {
+        if (root.isVisible && !hiding) {
             delayedHide()
             return
         }
@@ -184,7 +188,8 @@ class TitleDialog(context: Context) : Dialog(context) {
     fun hideTitle() {
         if (isStop) return
         isStop = true
-        if (hiding) return
+        handler.removeCallbacks(runnable)
+        if (hiding || !root.isVisible) return
         viewYAnimate(false)
     }
 
@@ -193,7 +198,10 @@ class TitleDialog(context: Context) : Dialog(context) {
     }
 
     private fun viewYAnimate(into: Boolean) {
+        root.animation?.setAnimationListener(null)
+        root.clearAnimation()
         if (into) {
+            hiding = false
             root.visibility = View.VISIBLE
         }
         val alphaAnimation = createAllAnimation(into)
@@ -244,6 +252,5 @@ class TitleDialog(context: Context) : Dialog(context) {
     companion object {
         private const val ANIMATION_DURATION: Long = 600L
         private const val ALPHA_ANIMATION_DURATION: Long = 500L
-        private val DELAY_DURATION: Long = config.titleDelayDuration.toLong()
     }
 }

@@ -561,6 +561,7 @@ fun LyricGradientDialog(showDialog: MutableState<Boolean>) {
                 onClick = {
                     ActivityTools.colorSCheck(value.value, unit = { config.lyricGradientColor = it })
                     showDialog.value = false
+                    changeConfig()
                 }
             )
         }

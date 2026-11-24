@@ -161,8 +161,15 @@ class SystemUILyric : BaseHook() {
     private val isReady: Boolean get() = this@SystemUILyric::clockView.isInitialized
 
     private var theoreticalWidth: Int = 0
-    private lateinit var point: Point
+    private var point: Point = Point(0, 0)
 
+    private fun String.toColorIntOrNull(): Int? = runCatching { trim().toColorInt() }.getOrNull()
+
+    private fun parseColors(raw: String): List<Int> =
+        raw.split(",").mapNotNull { part ->
+            val t = part.trim()
+            if (t.isEmpty()) null else t.toColorIntOrNull()
+        }
 
     private val displayMetrics: DisplayMetrics by lazy { context.resources.displayMetrics }
     private val displayWidth: Int by lazy { displayMetrics.widthPixels }
@@ -178,20 +185,24 @@ class SystemUILyric : BaseHook() {
             override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
                 super.onSizeChanged(w, h, oldw, oldh)
                 if (config.lyricGradientColor.isNotEmpty()) {
-                    config.lyricGradientColor.trim().split(",").map { it.trim().toColorInt() }
-                        .let { colors ->
-                            if (colors.isEmpty()) {
-                                setTextColor(Color.WHITE)
-                            } else if (colors.size < 2) {
-                                setTextColor(colors[0])
-                            } else {
-                                val textShader = LinearGradient(
-                                    0f, 0f, width.toFloat(),
-                                    0f, colors.toIntArray(), null, Shader.TileMode.CLAMP
-                                )
-                                setLinearGradient(textShader)
-                            }
+                    val colors = parseColors(config.lyricGradientColor)
+                    when {
+                        colors.isEmpty() -> {
+                            setLinearGradient(null)
+                            setTextColor(Color.WHITE)
                         }
+                        colors.size < 2 -> {
+                            setLinearGradient(null)
+                            setTextColor(colors[0])
+                        }
+                        else -> {
+                            val textShader = LinearGradient(
+                                0f, 0f, width.toFloat().coerceAtLeast(1f),
+                                0f, colors.toIntArray(), null, Shader.TileMode.CLAMP
+                            )
+                            setLinearGradient(textShader)
+                        }
+                    }
                 }
             }
         }.apply {
@@ -323,148 +334,155 @@ class SystemUILyric : BaseHook() {
         }
 
         // 状态栏图标颜色更改
-        loadClassOrNull("com.android.systemui.statusbar.phone.DarkIconDispatcherImpl").isNotNull {
-            it.methodFinder().filterByName("applyDarkIntensity").filterNonAbstract().single().createHook {
-                after { hookParam ->
-                    if (!isMusicPlaying) return@after
+        runCatching {
+            loadClassOrNull("com.android.systemui.statusbar.phone.DarkIconDispatcherImpl").isNotNull {
+                it.methodFinder().filterByName("applyDarkIntensity").filterNonAbstract().firstOrNull()?.createHook {
+                    after { hookParam ->
+                        if (!isMusicPlaying) return@after
 
-                    val mIconTint =
-                        hookParam.thisObject.objectHelper().getObjectOrNullAs<Int>("mIconTint")
-                    lastColor = mIconTint ?: Color.BLACK
+                        val mIconTint =
+                            hookParam.thisObject.objectHelper().getObjectOrNullAs<Int>("mIconTint")
+                        lastColor = mIconTint ?: Color.BLACK
+                    }
                 }
             }
         }
 
         if (config.hideNotificationIcon) {
-            moduleRes.getString(R.string.hide_notification_icon).log()
+            runCatching { moduleRes.getString(R.string.hide_notification_icon).log() }
             fun HookFactory.hideNoticeIcon(mode: Int) {
                 after { hookParam ->
-                    val clazz = hookParam.thisObject::class.java
-                    val name =
-                        if (mode == 0) "NotificationIconAreaController" else "CollapsedStatusBarFragment"
-                    val method =
-                        if (mode == 0) "mNotificationIconArea" else "mNotificationIconAreaInner"
-                    if (clazz.simpleName == name) {
-                        hookParam.thisObject.objectHelper {
-                            notificationIconArea = this.getObjectOrNullAs<View>(method)!!
+                    runCatching {
+                        val fieldName =
+                            if (mode == 0) "mNotificationIconArea" else "mNotificationIconAreaInner"
+                        val found = hookParam.thisObject.getObjectFieldIfExist(fieldName) as? View
+                        if (found != null) {
+                            notificationIconArea = found
                         }
-                    } else {
-                        notificationIconArea =
-                            clazz.superclass?.getField(method)?.get(hookParam.thisObject) as? View
                     }
                 }
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                loadClassOrNull("com.android.systemui.statusbar.phone.fragment.CollapsedStatusBarFragment").isNotNull {
-                    it.methodFinder().filterByName("onViewCreated").single().createHook {
-                        hideNoticeIcon(1)
-                    }
-                }
-            } else {
-                loadClassOrNull("com.android.systemui.statusbar.phone.NotificationIconAreaController").isNotNull {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        it.constructorFinder().single().createHook {
-                            hideNoticeIcon(0)
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                    loadClassOrNull("com.android.systemui.statusbar.phone.fragment.CollapsedStatusBarFragment").isNotNull {
+                        it.methodFinder().filterByName("onViewCreated").firstOrNull()?.createHook {
+                            hideNoticeIcon(1)
                         }
-                    } else {
-                        it.methodFinder().filterByName("initializeNotificationAreaViews").single()
-                            .createHook {
+                    }
+                } else {
+                    loadClassOrNull("com.android.systemui.statusbar.phone.NotificationIconAreaController").isNotNull {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            it.constructorFinder().firstOrNull()?.createHook {
                                 hideNoticeIcon(0)
                             }
+                        } else {
+                            it.methodFinder().filterByName("initializeNotificationAreaViews").firstOrNull()
+                                ?.createHook {
+                                    hideNoticeIcon(0)
+                                }
+                        }
                     }
                 }
             }
         }
 
         // 触摸监听
-        loadClassOrNull("com.android.systemui.statusbar.phone.PhoneStatusBarView").isNotNull {
-            it.methodFinder().filterByName("onTouchEvent").single().createHook {
-                before { hookParam ->
-                    val motionEvent = hookParam.args[0] as MotionEvent
-                    when (motionEvent.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            point = Point(motionEvent.rawX.toInt(), motionEvent.rawY.toInt())
-                        }
+        runCatching {
+            loadClassOrNull("com.android.systemui.statusbar.phone.PhoneStatusBarView").isNotNull {
+                it.methodFinder().filterByName("onTouchEvent").firstOrNull()?.createHook {
+                    before { hookParam ->
+                        val motionEvent = hookParam.args[0] as? MotionEvent ?: return@before
+                        when (motionEvent.action) {
+                            MotionEvent.ACTION_DOWN -> {
+                                point = Point(motionEvent.rawX.toInt(), motionEvent.rawY.toInt())
+                            }
 
-                        MotionEvent.ACTION_MOVE -> {
-                        }
+                            MotionEvent.ACTION_MOVE -> {
+                            }
 
-                        MotionEvent.ACTION_UP -> {
-                            val isMove =
-                                abs(point.y - motionEvent.rawY.toInt()) > 50 || abs(point.x - motionEvent.rawX.toInt()) > 50
-                            val isLongChick = motionEvent.eventTime - motionEvent.downTime > 500
-                            when (isMove) {
-                                true -> {
-                                    if (config.slideStatusBarCutSongs) {
-                                        if (isMusicPlaying) {
-                                            if (isHiding) return@before
+                            MotionEvent.ACTION_UP -> {
+                                val isMove =
+                                    abs(point.y - motionEvent.rawY.toInt()) > 50 || abs(point.x - motionEvent.rawX.toInt()) > 50
+                                val isLongChick = motionEvent.eventTime - motionEvent.downTime > 500
+                                when (isMove) {
+                                    true -> {
+                                        if (config.slideStatusBarCutSongs) {
+                                            if (isMusicPlaying) {
+                                                if (isHiding) return@before
 
-                                            if (abs(point.y - motionEvent.rawY.toInt()) <= config.slideStatusBarCutSongsYRadius) {
-                                                val i = point.x - motionEvent.rawX.toInt()
-                                                if (abs(i) > config.slideStatusBarCutSongsXRadius) {
-                                                    moduleRes.getString(R.string.slide_status_bar_cut_songs)
-                                                        .log()
-                                                    if (i > 0) {
-                                                        shell("input keyevent 87", false)
-                                                    } else {
-                                                        shell("input keyevent 88", false)
+                                                if (abs(point.y - motionEvent.rawY.toInt()) <= config.slideStatusBarCutSongsYRadius) {
+                                                    val i = point.x - motionEvent.rawX.toInt()
+                                                    if (abs(i) > config.slideStatusBarCutSongsXRadius) {
+                                                        runCatching {
+                                                            moduleRes.getString(R.string.slide_status_bar_cut_songs)
+                                                                .log()
+                                                        }
+                                                        if (i > 0) {
+                                                            shell("input keyevent 87", false)
+                                                        } else {
+                                                            shell("input keyevent 88", false)
+                                                        }
+                                                        hookParam.result = true
                                                     }
-                                                    hookParam.result = true
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                false -> {
-                                    when (isLongChick) {
-                                        true -> {
-                                            if (config.longClickStatusBarStop) {
-                                                if (isHiding) return@before
+                                    false -> {
+                                        when (isLongChick) {
+                                            true -> {
+                                                if (config.longClickStatusBarStop) {
+                                                    if (isHiding) return@before
 
-                                                moduleRes.getString(R.string.long_click_status_bar_stop)
-                                                    .log()
-                                                shell("input keyevent 85", false)
-                                                hookParam.result = true
-                                            }
-                                        }
-
-                                        false -> {
-                                            if (config.clickStatusBarToHideLyric || FocusNotifyController.isOS2FocusNotifyShowing) {
-                                                if (!isMusicPlaying) return@before
-                                                if (FocusNotifyController.isOS1FocusNotifyShowing) return@before
-
-                                                moduleRes.getString(R.string.click_status_bar_to_hide_lyric)
-                                                    .log()
-                                                if (isHiding) {
-                                                    if (FocusNotifyController.canControlFocusNotify()) {
-                                                        if (FocusNotifyController.shouldOpenFocusNotify(
-                                                                motionEvent
-                                                            )
-                                                        ) {
-                                                            "Should open focus notify".log()
-                                                            return@before
-                                                        }
+                                                    runCatching {
+                                                        moduleRes.getString(R.string.long_click_status_bar_stop)
+                                                            .log()
                                                     }
-                                                    FocusNotifyController.isInteraction = false
+                                                    shell("input keyevent 85", false)
                                                     hookParam.result = true
-                                                    updateLyricState()
-                                                    autoHideStatusBarInFullScreenModeIfNeed()
-                                                } else {
-                                                    val x = motionEvent.x.toInt()
-                                                    val y = motionEvent.y.toInt()
-                                                    val left = lyricLayout.left
-                                                    val top = lyricLayout.top
-                                                    val right = lyricLayout.right
-                                                    val bottom = lyricLayout.bottom
-                                                    if (x in left..right && y in top..bottom) {
-                                                        FocusNotifyController.isInteraction = true
-                                                        hookParam.result = true
-                                                        updateLyricState(showLyric = false)
-                                                        autoHideStatusBarInFullScreenModeIfNeed()
+                                                }
+                                            }
+
+                                            false -> {
+                                                if (config.clickStatusBarToHideLyric || FocusNotifyController.isOS2FocusNotifyShowing) {
+                                                    if (!isMusicPlaying) return@before
+                                                    if (FocusNotifyController.isOS1FocusNotifyShowing) return@before
+
+                                                    runCatching {
+                                                        moduleRes.getString(R.string.click_status_bar_to_hide_lyric)
+                                                            .log()
                                                     }
-                                                    "Change to hide LyricView: $isHiding".log()
+                                                    if (isHiding) {
+                                                        if (FocusNotifyController.canControlFocusNotify()) {
+                                                            if (FocusNotifyController.shouldOpenFocusNotify(
+                                                                    motionEvent
+                                                                )
+                                                            ) {
+                                                                "Should open focus notify".log()
+                                                                return@before
+                                                            }
+                                                        }
+                                                        FocusNotifyController.isInteraction = false
+                                                        hookParam.result = true
+                                                        updateLyricState()
+                                                        autoHideStatusBarInFullScreenModeIfNeed()
+                                                    } else {
+                                                        val x = motionEvent.x.toInt()
+                                                        val y = motionEvent.y.toInt()
+                                                        val left = lyricLayout.left
+                                                        val top = lyricLayout.top
+                                                        val right = lyricLayout.right
+                                                        val bottom = lyricLayout.bottom
+                                                        if (x in left..right && y in top..bottom) {
+                                                            FocusNotifyController.isInteraction = true
+                                                            hookParam.result = true
+                                                            updateLyricState(showLyric = false)
+                                                            autoHideStatusBarInFullScreenModeIfNeed()
+                                                        }
+                                                        "Change to hide LyricView: $isHiding".log()
+                                                    }
                                                 }
                                             }
                                         }
@@ -478,30 +496,36 @@ class SystemUILyric : BaseHook() {
         }
 
         // 屏幕状态
-        loadClassOrNull("com.android.systemui.statusbar.phone.CentralSurfacesImpl").isNotNull {
-            it.constructorFinder().singleOrNull().ifNotNull { constructor ->
-                constructor.createHook {
-                    after { hook ->
-                        centralSurfacesImpl = hook.thisObject
-                        autoHideController = hook.thisObject.getObjectField("mAutoHideController")
-                        val mStatusBarModeRepository = hook.thisObject.getObjectFieldIfExist("mStatusBarModeRepository")
-                        defaultDisplay = mStatusBarModeRepository?.getObjectFieldIfExist("defaultDisplay")
+        runCatching {
+            loadClassOrNull("com.android.systemui.statusbar.phone.CentralSurfacesImpl").isNotNull {
+                it.constructorFinder().singleOrNull().ifNotNull { constructor ->
+                    constructor.createHook {
+                        after { hook ->
+                            runCatching {
+                                centralSurfacesImpl = hook.thisObject
+                                autoHideController = hook.thisObject.getObjectFieldIfExist("mAutoHideController")
+                                val mStatusBarModeRepository = hook.thisObject.getObjectFieldIfExist("mStatusBarModeRepository")
+                                defaultDisplay = mStatusBarModeRepository?.getObjectFieldIfExist("defaultDisplay")
+                            }
+                        }
                     }
                 }
             }
         }
 
-        loadClassOrNull("com.android.systemui.SystemUIApplication").isNotNull { clazz ->
-            clazz.methodFinder().filterByName("onConfigurationChanged").single().createHook {
-                after { hookParam ->
-                    "onConfigurationChanged".log()
-                    val newConfig = hookParam.args[0] as Configuration
+        runCatching {
+            loadClassOrNull("com.android.systemui.SystemUIApplication").isNotNull { clazz ->
+                clazz.methodFinder().filterByName("onConfigurationChanged").firstOrNull()?.createHook {
+                    after { hookParam ->
+                        "onConfigurationChanged".log()
+                        val newConfig = hookParam.args[0] as? Configuration ?: return@after
 
-                    if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE ||
-                        newConfig.orientation == Configuration.ORIENTATION_PORTRAIT
-                    ) {
-                        if (!isReady) return@after
-                        updateLyricState()
+                        if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE ||
+                            newConfig.orientation == Configuration.ORIENTATION_PORTRAIT
+                        ) {
+                            if (!isReady) return@after
+                            updateLyricState()
+                        }
                     }
                 }
             }
@@ -522,9 +546,10 @@ class SystemUILyric : BaseHook() {
             if (isHyperOS && config.mHyperOSTexture) {
                 val blurRadio = config.mHyperOSTextureRadio
                 val cornerRadius = cornerRadius(config.mHyperOSTextureCorner.toFloat())
+                val bgColor = config.mHyperOSTextureBgColor.toColorIntOrNull() ?: "#15818181".toColorInt()
                 val blendModes = arrayOf(
-                    intArrayOf(106, config.mHyperOSTextureBgColor.toColorInt()),
-                    intArrayOf(3, config.mHyperOSTextureBgColor.toColorInt())
+                    intArrayOf(106, bgColor),
+                    intArrayOf(3, bgColor)
                 )
                 lyricLayout.setBackgroundBlur(blurRadio, cornerRadius, blendModes)
             }
@@ -1022,7 +1047,9 @@ class SystemUILyric : BaseHook() {
     private fun updateConfig(delay: Long = 0L) {
         "Updating Config".log()
         config.update()
+        statusbar.lyric.tools.LogTools.init(config.outLog)
         goMainThread(delay) {
+            if (!isReady) return@goMainThread
             lyricView.apply {
                 setTextSize(
                     TypedValue.COMPLEX_UNIT_SHIFT,
@@ -1034,39 +1061,62 @@ class SystemUILyric : BaseHook() {
                     config.lyricEndMargins,
                     config.lyricBottomMargins
                 )
-                if (config.lyricGradientColor.isEmpty()) {
-                    if (config.lyricColor.isEmpty()) {
+                val gradientColors = if (config.lyricGradientColor.isNotEmpty()) {
+                    parseColors(config.lyricGradientColor)
+                } else {
+                    emptyList()
+                }
+                if (gradientColors.size >= 2) {
+                    val shaderWidth = width.toFloat().takeIf { it > 0f }
+                        ?: theoreticalWidth.toFloat().coerceAtLeast(1f)
+                    setLinearGradient(
+                        LinearGradient(
+                            0f, 0f, shaderWidth,
+                            0f, gradientColors.toIntArray(), null, Shader.TileMode.CLAMP
+                        )
+                    )
+                } else {
+                    setLinearGradient(null)
+                    if (gradientColors.size == 1) {
+                        setTextColor(gradientColors[0])
+                    } else if (config.lyricColor.isEmpty()) {
                         setTextColor(clockView.currentTextColor)
                     } else {
-                        setTextColor(config.lyricColor.toColorInt())
+                        setTextColor(config.lyricColor.toColorIntOrNull() ?: clockView.currentTextColor)
                     }
                 }
                 setLetterSpacings(config.lyricLetterSpacing / 100f)
                 setStrokeWidth(config.lyricStrokeWidth / 100f)
                 if (!config.dynamicLyricSpeed) setScrollSpeed(config.lyricSpeed.toFloat())
-                if (config.lyricBackgroundColor.isNotEmpty()) {
-                    if (config.lyricBackgroundColor.split(",").size < 2) {
+                val bgColors = if (config.lyricBackgroundColor.isNotEmpty()) {
+                    parseColors(config.lyricBackgroundColor)
+                } else {
+                    emptyList()
+                }
+                when {
+                    bgColors.isEmpty() -> {
+                        setBackgroundColor(Color.TRANSPARENT)
+                    }
+                    bgColors.size == 1 -> {
                         if (config.lyricBackgroundRadius != 0) {
                             setBackgroundColor(Color.TRANSPARENT)
                             background = GradientDrawable().apply {
                                 cornerRadius = config.lyricBackgroundRadius.toFloat()
-                                setColor(config.lyricBackgroundColor.toColorInt())
+                                setColor(bgColors[0])
                             }
                         } else {
-                            setBackgroundColor(config.lyricBackgroundColor.toColorInt())
+                            setBackgroundColor(bgColors[0])
                         }
-                    } else {
-                        config.lyricBackgroundColor.trim().split(",").map { it.trim().toColorInt() }
-                            .let { colors ->
-                                val gradientDrawable = GradientDrawable(
-                                    GradientDrawable.Orientation.LEFT_RIGHT, colors.toIntArray()
-                                ).apply {
-                                    if (config.lyricBackgroundRadius != 0) {
-                                        cornerRadius = config.lyricBackgroundRadius.toFloat()
-                                    }
-                                }
-                                background = gradientDrawable
+                    }
+                    else -> {
+                        val gradientDrawable = GradientDrawable(
+                            GradientDrawable.Orientation.LEFT_RIGHT, bgColors.toIntArray()
+                        ).apply {
+                            if (config.lyricBackgroundRadius != 0) {
+                                cornerRadius = config.lyricBackgroundRadius.toFloat()
                             }
+                        }
+                        background = gradientDrawable
                     }
                 }
 
@@ -1104,23 +1154,30 @@ class SystemUILyric : BaseHook() {
                             config.iconBottomMargins
                         )
                         if (config.iconSize == 0) {
-                            width = clockView.height / 2
-                            height = clockView.height / 2
+                            val defaultSize = if (clockView.height > 0) {
+                                clockView.height / 2
+                            } else {
+                                statusbar.lyric.tools.Tools.dp2px(context, 14f)
+                            }
+                            width = defaultSize
+                            height = defaultSize
                         } else {
                             width = config.iconSize
                             height = config.iconSize
                         }
                     }
-                    if (config.iconColor.isEmpty()) {
-                        setColorFilter(clockView.currentTextColor, PorterDuff.Mode.SRC_IN)
+                    val tintColor = if (config.iconColor.isEmpty()) {
+                        clockView.currentTextColor
                     } else {
-                        setColorFilter(config.iconColor.toColorInt(), PorterDuff.Mode.SRC_IN)
+                        config.iconColor.toColorIntOrNull() ?: clockView.currentTextColor
                     }
-                    if (config.iconBgColor.isEmpty()) {
-                        setBackgroundColor(Color.TRANSPARENT)
+                    setColorFilter(tintColor, PorterDuff.Mode.SRC_IN)
+                    val iconBg = if (config.iconBgColor.isEmpty()) {
+                        Color.TRANSPARENT
                     } else {
-                        setBackgroundColor(config.iconBgColor.toColorInt())
+                        config.iconBgColor.toColorIntOrNull() ?: Color.TRANSPARENT
                     }
+                    setBackgroundColor(iconBg)
                 }
             }
         }

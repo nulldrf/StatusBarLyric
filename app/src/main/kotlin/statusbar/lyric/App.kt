@@ -165,6 +165,7 @@ class AppNavigator(val backStack: NavBackStack) {
 
 @Composable
 fun rememberBlurBackdrop(): LayerBackdrop? {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return null
     if (!isRuntimeShaderSupported()) return null
     val surfaceColor = MiuixTheme.colorScheme.surface
     return rememberLayerBackdrop {

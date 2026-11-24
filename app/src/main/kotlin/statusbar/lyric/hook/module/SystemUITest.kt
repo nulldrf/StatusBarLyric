@@ -224,13 +224,14 @@ class SystemUITest : BaseHook() {
                                 && da.textSize == data.textSize
                                 && da.index == data.index
                             ) {
-                                if (lastViewId != textview.id) {
+                                if (!this@SystemUITest::lastView.isInitialized || lastView !== textview) {
                                     if (this@SystemUITest::lastView.isInitialized) {
-                                        (lastView.parent as LinearLayout).removeView(testTextView)
+                                        runCatching { (lastView.parent as? LinearLayout)?.removeView(testTextView) }
                                         lastView.showView()
                                     }
+                                    runCatching { (testTextView.parent as? android.view.ViewGroup)?.removeView(testTextView) }
                                     textview.hideView()
-                                    val parentLinearLayout = textview.parent as LinearLayout
+                                    val parentLinearLayout = textview.parent as? LinearLayout ?: return@forEach
                                     parentLinearLayout.addView(testTextView, 0)
                                     lastViewId = textview.id
                                     lastView = textview

@@ -35,7 +35,9 @@ import java.util.Locale
 
 object BackupTools {
 
-    private lateinit var sharedPreferences: SharedPreferences
+    private var sharedPreferences: SharedPreferences? = null
+
+    private fun resolveSp(): SharedPreferences = sharedPreferences ?: ActivityOwnSP.ownSP
 
     fun formatDate(date: Date): String {
         val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
@@ -71,32 +73,37 @@ object BackupTools {
     }
 
     fun handleReadDocument(activity: Activity, data: Uri?) {
-        val edit = sharedPreferences.edit()
         val uri = data ?: return
         try {
             activity.contentResolver.openInputStream(uri)?.bufferedReader().use { reader ->
                 val read = reader?.readText().orEmpty()
                 if (read.isNotEmpty()) {
-                    JSONObject(read).apply {
-                        keys().forEach { key ->
-                            when (val value = get(key)) {
-                                is String -> {
-                                    if (value.startsWith("Float:")) {
-                                        edit.putFloat(key, value.substring(6).toFloat() / 1000f)
+                    val json = JSONObject(read)
+                    val edit = resolveSp().edit()
+                    edit.clear()
+                    json.keys().forEach { key ->
+                        when (val value = json.get(key)) {
+                            is String -> {
+                                if (value.startsWith("Float:")) {
+                                    val parsed = value.substring(6).toFloatOrNull()
+                                    if (parsed != null) {
+                                        edit.putFloat(key, parsed / 1000f)
                                     } else {
                                         edit.putString(key, value)
                                     }
+                                } else {
+                                    edit.putString(key, value)
                                 }
-
-                                is Boolean -> edit.putBoolean(key, value)
-                                is Int -> edit.putInt(key, value)
-                                is Long -> edit.putLong(key, value)
-                                is Double -> edit.putFloat(key, value.toFloat())
                             }
+
+                            is Boolean -> edit.putBoolean(key, value)
+                            is Int -> edit.putInt(key, value)
+                            is Long -> edit.putLong(key, value)
+                            is Double -> edit.putFloat(key, value.toFloat())
                         }
                     }
                     edit.commit()
-                    ActivityOwnSP.syncAllToRemote()
+                    ActivityOwnSP.syncAllToRemote(overwriteRemote = true)
                     ActivityTools.showToastOnLooper("Configuration loaded successfully")
                 } else {
                     ActivityTools.showToastOnLooper("Load failed: Empty file")
@@ -110,9 +117,11 @@ object BackupTools {
     fun handleCreateDocument(activity: Activity, data: Uri?) {
         val uri = data ?: return
         try {
-            activity.contentResolver.openOutputStream(uri)?.bufferedWriter().use { writer ->
+            val stream = runCatching { activity.contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+                ?: activity.contentResolver.openOutputStream(uri)
+            stream?.bufferedWriter().use { writer ->
                 writer?.write(JSONObject().apply {
-                    sharedPreferences.all.forEach { (key, value) ->
+                    resolveSp().all.forEach { (key, value) ->
                         when (value) {
                             is Float -> put(key, "Float:${(value * 1000).toInt()}")
                             else -> put(key, value)

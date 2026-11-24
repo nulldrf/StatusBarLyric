@@ -34,7 +34,6 @@ class ConfigTools(
     private val readOnly: Boolean = false
 ) {
     private var mSP: SharedPreferences? = sharedPreferences
-    private var mSPEditor: SharedPreferences.Editor? = if (readOnly) null else sharedPreferences?.edit()
 
     private fun resolveSP(): SharedPreferences? {
         if (readOnly) {
@@ -52,14 +51,15 @@ class ConfigTools(
 
     fun put(key: String?, any: Any) {
         if (readOnly || key == null) return
+        val editor = mSP?.edit() ?: return
         when (any) {
-            is Int -> mSPEditor?.putInt(key, any)
-            is String -> mSPEditor?.putString(key, any)
-            is Boolean -> mSPEditor?.putBoolean(key, any)
-            is Float -> mSPEditor?.putFloat(key, any)
-            is Long -> mSPEditor?.putLong(key, any)
+            is Int -> editor.putInt(key, any)
+            is String -> editor.putString(key, any)
+            is Boolean -> editor.putBoolean(key, any)
+            is Float -> editor.putFloat(key, any)
+            is Long -> editor.putLong(key, any)
         }
-        mSPEditor?.commit()
+        editor.commit()
         XposedApp.syncPreference(CONFIG_NAME, key, any)
     }
 
@@ -83,7 +83,14 @@ class ConfigTools(
                         val raw = sp!!.all[key]
                         when (raw) {
                             is Number -> raw.toFloat() as T
-                            is String -> (raw.toFloatOrNull() ?: defValue) as T
+                            is String -> {
+                                val parsed = if (raw.startsWith("Float:")) {
+                                    raw.substring(6).toFloatOrNull()?.div(1000f)
+                                } else {
+                                    raw.toFloatOrNull()
+                                }
+                                (parsed ?: defValue) as T
+                            }
                             else -> defValue
                         }
                     }
@@ -97,7 +104,7 @@ class ConfigTools(
 
     fun clearConfig() {
         if (readOnly) return
-        mSPEditor?.clear()?.commit()
+        mSP?.edit()?.clear()?.commit()
         XposedApp.clearRemotePreferences(CONFIG_NAME)
     }
 }

@@ -39,7 +39,7 @@ import kotlin.system.exitProcess
 object ActivityTools {
     private val handler by lazy { Handler(Looper.getMainLooper()) }
 
-    lateinit var dataList: ArrayList<Data>
+    var dataList: ArrayList<Data> = arrayListOf()
 
     fun isHook(): Boolean = false
 
@@ -47,6 +47,8 @@ object ActivityTools {
         Thread {
             Thread.sleep(200)
             MainActivity.appContext.sendBroadcast(Intent("updateConfig").apply {
+                setPackage("com.android.systemui")
+                addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
                 putExtra("type", type)
                 putExtra("path", path)
             })
@@ -65,45 +67,56 @@ object ActivityTools {
     }
 
     fun colorCheck(value: String, unit: (String) -> Unit, default: String = "") {
-        if (value.isEmpty()) {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) {
             unit(default)
-        } else {
-            try {
-                value.toColorInt()
-            } catch (_: Exception) {
-                showToastOnLooper(MainActivity.appContext.getString(R.string.color_error))
-                return
-            }
+            return
         }
-        unit(value)
+        try {
+            trimmed.toColorInt()
+        } catch (_: Exception) {
+            showToastOnLooper(MainActivity.appContext.getString(R.string.color_error))
+            return
+        }
+        unit(trimmed)
     }
 
     fun colorSCheck(value: String, unit: (String) -> Unit, default: String = "") {
-        if (value.isEmpty()) {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) {
             unit(default)
-        } else {
-            try {
-                value.split(",").forEach {
-                    if (it.isNotEmpty()) {
-                        it.trim().toColorInt()
-                    }
-                }
-            } catch (_: Exception) {
-                showToastOnLooper(MainActivity.appContext.getString(R.string.color_error))
-                return
-            }
+            return
         }
-        unit(value)
+        val parts = trimmed.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty()) {
+            unit(default)
+            return
+        }
+        try {
+            parts.forEach { it.toColorInt() }
+        } catch (_: Exception) {
+            showToastOnLooper(MainActivity.appContext.getString(R.string.color_error))
+            return
+        }
+        unit(parts.joinToString(","))
     }
 
     fun openUrl(url: String) {
-        MainActivity.appContext.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+        runCatching {
+            MainActivity.appContext.startActivity(
+                Intent(Intent.ACTION_VIEW, url.toUri()).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        }
     }
 
     fun restartApp() {
-        val intent = MainActivity.appContext.packageManager.getLaunchIntentForPackage(MainActivity.appContext.packageName)
-        intent!!.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        MainActivity.appContext.startActivity(intent)
+        val ctx = MainActivity.appContext
+        val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+            ?: Intent(ctx, MainActivity::class.java)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ctx.startActivity(intent)
         exitProcess(0)
     }
 }

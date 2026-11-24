@@ -90,7 +90,7 @@ class FocusNotifyController {
                 canHideFocusNotify = true
                 (shouldShowMethod as Method).createHook {
                     after { hook ->
-                        val show = hook.result as Boolean
+                        val show = hook.result as? Boolean ?: return@after
                         if (show) {
                             if (!isHideFocusNotify) {
                                 isInteraction = true
@@ -112,9 +112,9 @@ class FocusNotifyController {
             } else {
                 canHideFocusNotify = false
                 ClassUtil.loadClassOrNull("com.android.systemui.statusbar.phone.FocusedNotifPromptController$2").isNotNull {
-                    it.methodFinder().filterByName("handleMessage").single().createHook {
+                    it.methodFinder().filterByName("handleMessage").firstOrNull()?.createHook {
                         before { hook ->
-                            val message = hook.args[0] as Message
+                            val message = hook.args[0] as? Message ?: return@before
                             if (message.what == 1003) {
                                 val show = isFocusNotifyShowing()
                                 if (systemUILyric.isMusicPlaying) {
@@ -143,12 +143,14 @@ class FocusNotifyController {
             val mContent = focusedNotify!!.getObjectField("mContent")
             if (mIcon == null || mContent == null) return
             Tools.goMainThread {
-                focusedNotify!!.callMethod("cancelFolme")
-                focusedNotify!!.callMethod("hideImmediately", mIcon)
-                focusedNotify!!.callMethod("hideImmediately", mContent)
-                focusedNotify!!.callMethod("setIsFocusedNotifPromptShowing", false)
-                isHideFocusNotify = true
-                "Hiding focus notify".log()
+                runCatching {
+                    focusedNotify?.callMethod("cancelFolme")
+                    focusedNotify?.callMethod("hideImmediately", mIcon)
+                    focusedNotify?.callMethod("hideImmediately", mContent)
+                    focusedNotify?.callMethod("setIsFocusedNotifPromptShowing", false)
+                    isHideFocusNotify = true
+                    "Hiding focus notify".log()
+                }
             }
         }
 
@@ -162,11 +164,13 @@ class FocusNotifyController {
             if (mIcon == null || mContent == null) return
             isHideFocusNotify = false
             Tools.goMainThread {
-                focusedNotify!!.callMethod("cancelFolme")
-                focusedNotify!!.callMethod("showImmediately", mIcon)
-                focusedNotify!!.callMethod("showImmediately", mContent)
-                focusedNotify!!.callMethod("setIsFocusedNotifPromptShowing", true)
-                "Showing focus notify".log()
+                runCatching {
+                    focusedNotify?.callMethod("cancelFolme")
+                    focusedNotify?.callMethod("showImmediately", mIcon)
+                    focusedNotify?.callMethod("showImmediately", mContent)
+                    focusedNotify?.callMethod("setIsFocusedNotifPromptShowing", true)
+                    "Showing focus notify".log()
+                }
             }
         }
 
@@ -183,11 +187,11 @@ class FocusNotifyController {
             if (!isFocusNotifyShowing()) return false
             if (isHideFocusNotify) return false
 
-            val focusedNotifyPromptView = focusedNotify!!.getObjectField("mView") ?: return false
+            val focusedNotifyPromptView = focusedNotify?.getObjectField("mView") ?: return false
 
             val x = motionEvent.rawX
-            val rect = focusedNotifyPromptView.getObjectField("mRect") as Rect
-            val mContent = focusedNotifyPromptView.getObjectField("mContent") as FrameLayout
+            val rect = focusedNotifyPromptView.getObjectField("mRect") as? Rect ?: return false
+            val mContent = focusedNotifyPromptView.getObjectField("mContent") as? FrameLayout ?: return false
             val right = rect.right
             if (right <= 0 || rect.left == right) {
                 mContent.getGlobalVisibleRect(rect)

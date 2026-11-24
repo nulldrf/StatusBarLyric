@@ -37,11 +37,15 @@ import statusbar.lyric.tools.Tools
 object ActivityOwnSP {
     val ownSP: SharedPreferences by lazy { Tools.getSP(MainActivity.appContext, CONFIG_NAME) }
     val config: Config by lazy { Config(ownSP, readOnly = false) }
-    private val ownEditor by lazy { ownSP.edit() }
 
-    private fun copyEntries(from: Map<String, *>, toEditor: SharedPreferences.Editor, overwrite: Boolean, existing: Map<String, *>) {
+    private fun copyEntries(
+        from: Map<String, *>,
+        toEditor: SharedPreferences.Editor,
+        overwrite: Boolean,
+        existingKeys: MutableSet<String>
+    ) {
         from.forEach { (key, value) ->
-            if (!overwrite && existing.containsKey(key)) return@forEach
+            if (!overwrite && existingKeys.contains(key)) return@forEach
             when (value) {
                 is Int -> toEditor.putInt(key, value)
                 is Float -> toEditor.putFloat(key, value)
@@ -64,6 +68,7 @@ object ActivityOwnSP {
                     toEditor.putStringSet(key, value as Set<String>)
                 }
             }
+            existingKeys.add(key)
         }
     }
 
@@ -75,7 +80,7 @@ object ActivityOwnSP {
         try {
             val dpContext = context.createDeviceProtectedStorageContext()
             val targetSp = dpContext.getSharedPreferences(CONFIG_NAME, Context.MODE_PRIVATE)
-            val existing = targetSp.all
+            val seenKeys = targetSp.all.keys.toMutableSet()
             val editor = targetSp.edit()
             var migrated = false
 
@@ -89,14 +94,17 @@ object ActivityOwnSP {
                 if (legacySp != null && legacySp !== targetSp) {
                     val map = legacySp.all
                     if (map.isNotEmpty()) {
-                        copyEntries(map, editor, overwrite = false, existing = existing)
-                        migrated = true
+                        val before = seenKeys.size
+                        copyEntries(map, editor, overwrite = false, existingKeys = seenKeys)
+                        if (seenKeys.size > before) {
+                            migrated = true
+                        }
                     }
                 }
             }
 
             if (migrated) {
-                editor.apply()
+                editor.commit()
                 "Migrated legacy local preferences into $CONFIG_NAME".log()
             }
         } catch (t: Throwable) {
@@ -116,7 +124,7 @@ object ActivityOwnSP {
 
             if (localAll.isEmpty() && remoteAll.isNotEmpty()) {
                 val localEditor = ownSP.edit()
-                copyEntries(remoteAll, localEditor, overwrite = true, existing = localAll)
+                copyEntries(remoteAll, localEditor, overwrite = true, existingKeys = mutableSetOf())
                 localEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION)
                 localEditor.commit()
                 "Restored preferences from Xposed RemotePreferences".log()
@@ -124,19 +132,20 @@ object ActivityOwnSP {
             }
 
             if (remoteAll.isNotEmpty()) {
+                val localKeys = localAll.keys.toMutableSet()
                 val localEditor = ownSP.edit()
-                copyEntries(remoteAll, localEditor, overwrite = false, existing = localAll)
+                copyEntries(remoteAll, localEditor, overwrite = false, existingKeys = localKeys)
                 localEditor.commit()
             }
 
             val mergedLocal = ownSP.all
             val remoteEditor = remotePrefs.edit()
-            copyEntries(mergedLocal, remoteEditor, overwrite = true, existing = remoteAll)
+            copyEntries(mergedLocal, remoteEditor, overwrite = true, existingKeys = mutableSetOf())
             remoteEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION)
             remoteEditor.commit()
 
             if (ownSP.getInt("ver", 0) < BuildConfig.COMPOSE_CONFIG_VERSION) {
-                ownEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION).commit()
+                ownSP.edit().putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION).commit()
             }
             "Synced ${mergedLocal.size} preference keys to Xposed RemotePreferences".log()
         } catch (t: Throwable) {
@@ -144,14 +153,30 @@ object ActivityOwnSP {
         }
     }
 
-    fun syncAllToRemote() {
+    fun syncAllToRemote(overwriteRemote: Boolean = false) {
         val service = XposedApp.xposedService ?: return
-        syncWithRemoteService(service)
+        if (!overwriteRemote) {
+            syncWithRemoteService(service)
+            return
+        }
+        try {
+            val remotePrefs = service.getRemotePreferences(CONFIG_NAME)
+            val localAll = ownSP.all
+            val remoteEditor = remotePrefs.edit()
+            remotePrefs.all.keys.forEach { remoteEditor.remove(it) }
+            remoteEditor.clear()
+            copyEntries(localAll, remoteEditor, overwrite = true, existingKeys = mutableSetOf())
+            remoteEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION)
+            remoteEditor.commit()
+            "Overwrote Xposed RemotePreferences with ${localAll.size} local keys".log()
+        } catch (t: Throwable) {
+            t.log()
+        }
     }
 
     fun updateConfigVer() {
         if (ownSP.getInt("ver", 0) < BuildConfig.COMPOSE_CONFIG_VERSION) {
-            ownEditor.putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION).apply()
+            ownSP.edit().putInt("ver", BuildConfig.COMPOSE_CONFIG_VERSION).apply()
             XposedApp.syncPreference(CONFIG_NAME, "ver", BuildConfig.COMPOSE_CONFIG_VERSION)
         }
     }

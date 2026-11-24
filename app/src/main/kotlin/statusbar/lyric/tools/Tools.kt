@@ -66,7 +66,7 @@ object Tools {
         val xiaomiMarketName = getSystemProperties("ro.product.marketname")
         val vivoMarketName = getSystemProperties("ro.vivo.market.name")
         when {
-            Build.BRAND.uppercaseFirstChar() == "Vivo" -> vivoMarketName.uppercaseFirstChar()
+            Build.BRAND.equals("vivo", ignoreCase = true) && vivoMarketName.isNotEmpty() -> vivoMarketName.uppercaseFirstChar()
             xiaomiMarketName.isNotEmpty() -> xiaomiMarketName.uppercaseFirstChar()
             else -> "${Build.BRAND.uppercaseFirstChar()} ${Build.MODEL}"
         }

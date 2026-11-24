@@ -182,6 +182,8 @@ fun MenuPage(
                                     onCheckedChange = {
                                         outLog.value = it
                                         config.outLog = it
+                                        statusbar.lyric.tools.LogTools.init(it)
+                                        ActivityTools.changeConfig()
                                     }
                                 )
                             }

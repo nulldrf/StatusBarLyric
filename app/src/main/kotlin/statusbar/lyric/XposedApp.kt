@@ -24,6 +24,8 @@ package statusbar.lyric
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -35,6 +37,7 @@ import statusbar.lyric.tools.ActivityTools.isHook
 import statusbar.lyric.tools.LogTools.log
 
 class XposedApp : Application(), XposedServiceHelper.OnServiceListener {
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -48,22 +51,29 @@ class XposedApp : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onServiceBind(service: XposedService) {
         xposedService = service
-        isModuleActive = true
-        MainActivity.isLoad = true
-        frameworkInfo = "${service.frameworkName} ${service.frameworkVersion} (API ${service.apiVersion})"
-        activeScope = runCatching { service.scope }.getOrDefault(emptyList())
+        val info = "${service.frameworkName} ${service.frameworkVersion} (API ${service.apiVersion})"
+        val scopeList = runCatching { service.scope }.getOrDefault(emptyList())
         ActivityOwnSP.syncWithRemoteService(service)
-        "XposedService bound: $frameworkInfo, scope=$activeScope".log()
+        MainActivity.isLoad = true
+        mainHandler.post {
+            isModuleActive = true
+            frameworkInfo = info
+            activeScope = scopeList
+        }
+        "XposedService bound: $info, scope=$scopeList".log()
     }
 
     override fun onServiceDied(service: XposedService) {
         if (xposedService === service) {
             xposedService = null
         }
-        isModuleActive = isHook()
-        MainActivity.isLoad = isModuleActive
-        frameworkInfo = ""
-        activeScope = emptyList()
+        val active = isHook()
+        MainActivity.isLoad = active
+        mainHandler.post {
+            isModuleActive = active
+            frameworkInfo = ""
+            activeScope = emptyList()
+        }
         "XposedService died".log()
     }
 
